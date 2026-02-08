@@ -4,3 +4,4 @@ numpy
 scipy
 python-osc
 pyaudio
+toml

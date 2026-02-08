@@ -61,26 +61,39 @@ This tool provides a local, low-friction pipeline for markerless motion capture 
 
 ## 4. Configuration
 
+**All settings are located in `config.toml`.**
+
 ### Network Setup (OSC)
-To enable communication between the PC, iPhone, and Unreal Engine:
-1.  **Find your PC's IP Address**: Run `ipconfig` in CMD.
-2.  **iPhone Setup**:
-    -   Open Live Link Face.
-    -   Go to Settings > OSC.
-    -   Set **Target IP** to your PC's IP.
-    -   Set **Port** to `8000` (Unreal's listener).
-3.  **Tool Configuration**:
-    -   Open `src/osc/client.py` and `src/gui/app.py`.
-    -   Update `iphone_ip` to your iPhone's IP address.
-    -   Ensure `unreal_ip` is `127.0.0.1` (Localhost) and port `8000`.
+-   Edit `[Network]` section in `config.toml`.
+-   **iphone_ip**: Set to your iPhone's IP address (Settings > Wi-Fi).
+-   **unreal_ip**: Usually `127.0.0.1`.
 
 ### Camera Setup
--   Identify your camera indices (`0, 1, 2...`).
--   You can check these by running a simple OpenCV script or testing in the GUI.
+-   Edit `[Camera]` section in `config.toml`.
+-   **indices**: List of camera IDs, e.g., `[0, 1]`.
 
 ---
 
-## 5. Unreal Engine Integration
+## 5. Calibration (Essential)
+
+1.  **Capture**:
+    Run the capture tool. It will snap synchronized photos from all cameras every 2 seconds.
+    ```bash
+    python src/calibrate_cli.py --capture
+    ```
+    *Tip: Move the ChArUco board around to cover different angles and depths.*
+
+2.  **Process**:
+    Run the calibration solver.
+    ```bash
+    python src/calibrate_cli.py --process
+    ```
+    This generates `calibration.npz`.
+
+---
+
+## 6. Unreal Engine Integration
+
 
 A detailed setup guide is available in `unreal/UNREAL_SETUP.md`.
 
@@ -95,30 +108,20 @@ A detailed setup guide is available in `unreal/UNREAL_SETUP.md`.
 
 ---
 
-## 6. Usage Workflow
+## 7. Usage Workflow
 
-### Step A: Calibration (Important)
-*Before recording, you must calibrate your multi-camera setup.*
-1.  **Capture**: Take synchronized photos or a short video of a ChArUco board visible to all cameras.
-2.  **Run Calibration**:
-    -   Currently, the calibration logic is in `src/processing/calibrate.py`.
-    -   You may need to write a small script to call `calibrate_intrinsics` and save the `calibration.npz` file.
-    -   *Note*: The pipeline currently looks for `calibration.npz` (to be implemented fully).
-
-### Step B: Recording
+### Step A: Recording
 1.  **Launch the Controller**:
     ```bash
     python src/main.py
     ```
-2.  **Enter Details**:
-    -   **Scene Name**: e.g., `FightScene`
-    -   **Take Number**: e.g., `001`
-    -   **Cameras**: e.g., `0, 1` (comma-separated).
+2.  **Check Settings**: Scene Name, Take Number, and Cameras are pre-loaded from config but can be edited.
 3.  **Clap Sync**:
     -   Start Recording.
-    -   **CLAP LOUDLY** once, visible to all cameras. This is crucial for audio sync.
+    -   **CLAP LOUDLY** once.
 4.  **Action**: Perform your motion.
 5.  **Stop**: Click **STOP**.
+
 
 ### Step C: Processing & Import
 1.  **Auto-Processing**:

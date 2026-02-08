@@ -6,6 +6,7 @@ import os
 import glob
 import json
 
+
 class CameraCalibrator:
     def __init__(self, rows=7, columns=5, square_length=0.04, marker_length=0.02):
         # Default Board Settings (adjust as needed)
@@ -49,8 +50,9 @@ class CameraCalibrator:
             all_corners, all_ids, self.board, imsize, None, None)
 
         print(f"Calibration Reprojection Error: {ret}")
-        np.savez(save_path, mtx=camera_matrix, dist=dist_coeffs, ret=ret)
-        return camera_matrix, dist_coeffs
+        # np.savez(save_path, mtx=camera_matrix, dist=dist_coeffs, ret=ret) # Handled by caller now
+        return camera_matrix, dist_coeffs, ret
+
 
     def estimate_pose(self, image_path, camera_matrix, dist_coeffs):
         """
@@ -70,17 +72,4 @@ class CameraCalibrator:
                     return rvec, tvec
         return None, None
 
-def calibrate_all_cameras(data_dir="calibration_data", output_file="calibration.npz"):
-    # Expected structure: data_dir/cam0/*.jpg, data_dir/cam1/*.jpg, etc.
-    calib_data = {}
-    
-    # Needs to be adapted to finding folders
-    # For this simplified implementation, let's assume we capture a set of synced images 
-    # for EXTRINSICS, but use a video sweep for INTRINSICS.
-    # OR, we just grab one frame from each camera where the board is visible to define 0,0,0
-    
-    pass
 
-if __name__ == "__main__":
-    # Example usage CLI could go here
-    pass

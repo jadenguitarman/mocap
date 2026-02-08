@@ -4,9 +4,12 @@ import subprocess
 import sys
 import os
 from osc.client import MocapOSC
+from osc.client import MocapOSC
 from capture.audio import AudioRecorder
 from processing.pipeline import MocapPipeline
+from utils.config import config
 import tkinter.messagebox as msgbox
+
 
 
 
@@ -21,8 +24,9 @@ class MocapApp(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
 
         # Initialize OSC
-        # TODO: Move IPs to config
-        self.osc_client = MocapOSC(iphone_ip="192.168.1.100", unreal_ip="127.0.0.1")
+        # Loaded from config
+        self.osc_client = MocapOSC()
+
         
         # Initialize Audio
         self.audio_recorder = None
@@ -59,7 +63,12 @@ class MocapApp(ctk.CTk):
         self.label_cams.grid(row=2, column=0, padx=10, pady=10, sticky="w")
         self.entry_cams = ctk.CTkEntry(self.main_frame)
         self.entry_cams.grid(row=2, column=1, padx=10, pady=10, sticky="ew")
-        self.entry_cams.insert(0, "0, 1") # Default to 2 cameras
+        
+        # Load default cams from config
+        default_cams = config.get("Camera", {}).get("indices", [0, 1])
+        default_cams_str = ", ".join(map(str, default_cams))
+        self.entry_cams.insert(0, default_cams_str) 
+
 
         # Hand Tracking Toggle
         self.check_hand = ctk.CTkCheckBox(self.main_frame, text="Enable Hand Tracking (BODY_135)")

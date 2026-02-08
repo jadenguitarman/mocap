@@ -4,16 +4,21 @@ import socket
 import time
 import subprocess
 import platform
+from utils.config import config
+
 
 class MocapOSC:
-    def __init__(self, iphone_ip="192.168.1.100", iphone_port=5000, unreal_ip="127.0.0.1", unreal_port=8000):
-        self.iphone_ip = iphone_ip
-        self.iphone_port = iphone_port
-        self.unreal_ip = unreal_ip
-        self.unreal_port = unreal_port
+    def __init__(self, iphone_ip=None, iphone_port=None, unreal_ip=None, unreal_port=None):
+        net_config = config.get("Network", {})
+        
+        self.iphone_ip = iphone_ip or net_config.get("iphone_ip", "192.168.1.100")
+        self.iphone_port = iphone_port or net_config.get("iphone_port", 5000)
+        self.unreal_ip = unreal_ip or net_config.get("unreal_ip", "127.0.0.1")
+        self.unreal_port = unreal_port or net_config.get("unreal_port", 8000)
 
         self.client_iphone = SimpleUDPClient(self.iphone_ip, self.iphone_port)
         self.client_unreal = SimpleUDPClient(self.unreal_ip, self.unreal_port)
+
 
     def start_recording(self, scene_name, take_number):
         # iPhone Trigger

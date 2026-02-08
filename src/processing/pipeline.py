@@ -8,11 +8,17 @@ import glob
 from capture.audio import AudioRecorder
 from processing.triangulate import triangulate_frame
 from processing.filter import MocapFilter
+from utils.config import config
+
 
 class MocapPipeline:
-    def __init__(self, openpose_path="bin/OpenPoseDemo.exe", output_dir="MocapExports"):
-        self.openpose_path = openpose_path
+    def __init__(self, openpose_path=None, output_dir="MocapExports"):
+        op_config = config.get("OpenPose", {})
+        self.openpose_path = openpose_path or op_config.get("binary_path", "bin/OpenPoseDemo.exe")
+        self.net_resolution = op_config.get("net_resolution", "-1x320")
+        
         self.output_dir = output_dir
+
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
 
@@ -128,8 +134,9 @@ class MocapPipeline:
             "--write_json", output_dir,
             "--display", "0",
             "--render_pose", "0",
-            "--net_resolution", "-1x320"
+            "--net_resolution", self.net_resolution
         ]
+
         
         # Mocking execution if binary missing
         try:
