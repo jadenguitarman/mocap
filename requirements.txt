@@ -1,0 +1,6 @@
+customtkinter
+opencv-python
+numpy
+scipy
+python-osc
+pyaudio
