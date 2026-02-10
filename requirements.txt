@@ -5,3 +5,10 @@ scipy
 python-osc
 pyaudio
 toml
+flask
+librosa
+pyopenssl
+flask-socketio
+requests
+
+

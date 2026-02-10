@@ -8,7 +8,9 @@ import glob
 from capture.audio import AudioRecorder
 from processing.triangulate import triangulate_frame
 from processing.filter import MocapFilter
+from processing.aligner import AudioAligner
 from utils.config import config
+
 
 
 class MocapPipeline:
@@ -35,8 +37,16 @@ class MocapPipeline:
         start_frame = int(sync_time * fps)
         print(f"[Pipeline] Sync Frame: {start_frame}")
 
+        # 1.5 Align Mobile Uploads
+        # Logic: Check uploads folder for matching scene/take audio
+        # TODO: Implement full alignment logic here
+        aligner = AudioAligner()
+        # For now, just logging
+        print("[Pipeline] Checking for mobile upload alignment...")
+
         # 2. Run OpenPose for each camera
         # Result: JSONs in temp folders
+
         json_dirs = {}
         for cam_idx in cam_indices:
             video_file = f"{scene}_{take}_cam{cam_idx}.mp4"

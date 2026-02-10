@@ -92,7 +92,24 @@ This tool provides a local, low-friction pipeline for markerless motion capture 
 
 ---
 
-## 6. Unreal Engine Integration
+## 6. Mobile Node Setup
+
+**No separate command needed!** The main app launches the server automatically.
+
+1.  **Launch App**: `python src/main.py`.
+2.  **Connect Mobile**:
+    -   The App will display a URL (e.g., `https://192.168.1.5:5000`).
+    -   Open this on your phones.
+    -   Keep the browser open and awake.
+3.  **Control**:
+    -   When you hit **RECORD** in the Python App, all connected phones start recording.
+    -   When you hit **STOP**, they stop and upload their video.
+
+
+---
+
+## 7. Unreal Engine Integration
+
 
 
 A detailed setup guide is available in `unreal/UNREAL_SETUP.md`.

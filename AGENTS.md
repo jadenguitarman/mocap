@@ -99,6 +99,25 @@ The Agent must implement the "Glue" logic to move data from the Python Controlle
 
 * Include a **Ground-Snap Offset** variable that adds the "Zero Height" value calculated during calibration to the -axis of the root control.
 
+### **Task 4: Wi-Fi Browser-Based Node System**
+
+**4.1. Local Flask Server**
+
+* Host a secure HTTPS server (required for `getUserMedia` on mobile).
+* Implement an endpoint `/upload_chunk` that accepts `multipart/form-data` (Video/Audio blob + Timestamp).
+
+**4.2. HTML5 Recording Client**
+
+* Implement a `MediaRecorder` logic in JavaScript.
+* **Constraint:** Audio and Video must be multiplexed in the same container (WebM/MP4) to ensure the phone's internal AV sync is preserved.
+* **UI:** A "Level Meter" so the user can see if their mic is picking up the clap.
+
+**4.3. Multi-Stream Temporal Aligner**
+
+* **Audio Analysis:** Use `librosa.beat.onset_detect` to find the clap in every uploaded file.
+* **Master Sync:** Align all  phone streams to the **Primary PC Audio** track.
+* **Jitter Compensation:** Implement a "Linear Drift" correction. If Phone B’s clock runs slightly slower than the PC, the script must stretch/compress the CSV data to match the PC's timeline perfectly.
+
 ---
 
 ## 3. Boundaries & Safety
