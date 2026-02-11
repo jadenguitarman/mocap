@@ -35,7 +35,13 @@ function initSocket() {
     console.log("Received STOP command");
     stopRecording();
   });
+
+  socket.on('trigger_calibration', (data) => {
+    console.log("Received CALIBRATION trigger", data);
+    uploadCalibrationImage(data.count);
+  });
 }
+
 
 function setupAudioMeter(stream) {
   audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -153,7 +159,41 @@ function uploadBlob() {
     });
 }
 
+function uploadCalibrationImage(count) {
+  statusDiv.innerText = `Capturing Calib ${count}...`;
+
+  // Capture from video stream to canvas
+  const video = document.querySelector('video');
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  canvas.toBlob(function (blob) {
+    let formData = new FormData();
+    formData.append("image", blob, `img_${count}.jpg`);
+    formData.append("sid", socket.id);
+    formData.append("count", count);
+
+    fetch('/upload_calib', {
+      method: 'POST',
+      body: formData
+    })
+      .then(res => res.json())
+      .then(data => {
+        console.log("Calib upload success", data);
+        statusDiv.innerText = `Calib ${count} Sent`;
+      })
+      .catch(err => {
+        console.error("Calib upload failed", err);
+        statusDiv.innerText = "Calib Failed";
+      });
+  }, 'image/jpeg', 0.95);
+}
+
 btnRec.onclick = startRecording;
+
 btnStop.onclick = stopRecording;
 
 window.onload = initCamera;

@@ -80,19 +80,27 @@ class MocapApp(ctk.CTk):
         default_cams = config.get("Camera", {}).get("indices", [0, 1])
         default_cams_str = ", ".join(map(str, default_cams))
         self.entry_cams.insert(0, default_cams_str) 
+        
+        # Audio Device Selection
 
+        self.label_mic = ctk.CTkLabel(self.main_frame, text="Microphone:")
+        self.label_mic.grid(row=3, column=0, padx=10, pady=10, sticky="w")
+        self.combo_mic = ctk.CTkComboBox(self.main_frame, values=["Default"])
+        self.combo_mic.grid(row=3, column=1, padx=10, pady=10, sticky="ew")
+        self.populate_mics()
 
         # Hand Tracking Toggle
         self.check_hand = ctk.CTkCheckBox(self.main_frame, text="Enable Hand Tracking (BODY_135)")
-        self.check_hand.grid(row=3, column=0, columnspan=2, padx=10, pady=10, sticky="w")
+        self.check_hand.grid(row=4, column=0, columnspan=2, padx=10, pady=10, sticky="w")
         
         # Server Info
         self.label_ip = ctk.CTkLabel(self.main_frame, text=f"Connect Mobile to: https://{self.local_ip}:5000", font=("Arial", 16, "bold"))
-        self.label_ip.grid(row=4, column=0, columnspan=2, padx=10, pady=20)
+        self.label_ip.grid(row=5, column=0, columnspan=2, padx=10, pady=20)
 
         # Buttons Frame
         self.btn_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.btn_frame.grid(row=5, column=0, columnspan=2, padx=10, pady=20, sticky="ew")
+        self.btn_frame.grid(row=6, column=0, columnspan=2, padx=10, pady=20, sticky="ew")
+
         self.btn_frame.grid_columnconfigure(0, weight=1)
         self.btn_frame.grid_columnconfigure(1, weight=1)
         self.btn_frame.grid_columnconfigure(2, weight=1)
@@ -127,7 +135,32 @@ class MocapApp(ctk.CTk):
         except Exception:
             return "127.0.0.1"
 
+    def populate_mics(self):
+        try:
+            devices = AudioRecorder.list_devices()
+            if devices is None: # sounddevice might return device list or something else
+                 # It prints and returns. 
+                 pass
+            # Re-query properly
+            import sounddevice as sd
+            devs = sd.query_devices()
+            mic_names = []
+            self.mic_indices = {} # Name -> Index
+            
+            for i, dev in enumerate(devs):
+                if dev['max_input_channels'] > 0:
+                    name = f"{i}: {dev['name']}"
+                    mic_names.append(name)
+                    self.mic_indices[name] = i
+            
+            if mic_names:
+                self.combo_mic.configure(values=mic_names)
+                self.combo_mic.set(mic_names[0])
+        except Exception as e:
+            print(f"Error listing mics: {e}")
+
     def start_server(self):
+
         print("[MocapApp] Launching Flask Server...")
         # Ad-hoc SSL is used in app.py
         cmd = [sys.executable, "src/server/app.py"]
@@ -154,12 +187,31 @@ class MocapApp(ctk.CTk):
     def check_calibration(self):
         # Check for calibration.npz according to config
         calib_path = config.get("Calibration", {}).get("save_path", "calibration.npz")
+        
         if os.path.exists(calib_path):
-            self.btn_record.configure(state="normal")
-            self.label_status.configure(text="Ready (Calibrated)")
+            try:
+                import numpy as np
+                data = np.load(calib_path)
+                # Keys are mtx_{id}, dist_{id}, etc.
+                # Find all unique IDs
+                calibrated_ids = []
+                for key in data.files:
+                    if key.startswith("mtx_"):
+                        dev_id = key.replace("mtx_", "")
+                        calibrated_ids.append(dev_id)
+                
+                calibrated_ids.sort()
+                dev_str = ", ".join(calibrated_ids)
+                
+                self.btn_record.configure(state="normal")
+                self.label_status.configure(text=f"Ready. Calibrated: {dev_str}", text_color="green")
+            except Exception as e:
+                print(f"Error loading calibration: {e}")
+                self.label_status.configure(text="Calibration Error", text_color="red")
         else:
             self.btn_record.configure(state="disabled")
-            self.label_status.configure(text="Calibration Missing! Run Calibration.")
+            self.label_status.configure(text="Calibration Missing! Run Calibration.", text_color="orange")
+
 
     def run_calibration_thread(self):
         threading.Thread(target=self.run_calibration).start()
@@ -211,8 +263,16 @@ class MocapApp(ctk.CTk):
         
         # Start Audio
         filename = f"{scene}_{take}_audio.wav"
-        self.audio_recorder = AudioRecorder(filename=filename)
+        # Start Audio
+        filename = f"{scene}_{take}_audio.wav"
+        
+        # Get selected mic index
+        mic_name = self.combo_mic.get()
+        mic_idx = self.mic_indices.get(mic_name, None)
+        
+        self.audio_recorder = AudioRecorder(filename=filename, device=mic_idx)
         self.audio_recorder.start()
+
         
         # Start Video Subprocesses
         self.video_processes = []

@@ -121,17 +121,23 @@ A detailed setup guide is available in `unreal/UNREAL_SETUP.md`.
 
 ## 7. Usage Workflow
 
-### Step A: Recording
+### Step B: Recording
 1.  **Launch the Controller**:
     ```bash
-    python src/main.py
+    python3 src/main.py
+
     ```
-2.  **Check Settings**: Scene Name, Take Number, and Cameras are pre-loaded from config but can be edited.
-3.  **Clap Sync**:
-    -   Start Recording.
+2.  **Check Settings**:
+    -   Scene Name, Take Number.
+    -   **Select Microphone**: Choose your primary audio input (e.g., "External Microphone").
+    -   Cameras are pre-loaded from config.
+3.  **Connect Mobile**:
+    -   Open the displayed URL on your phones.
+4.  **Clap Sync**:
+    -   Click **RECORD**.
     -   **CLAP LOUDLY** once.
-4.  **Action**: Perform your motion.
-5.  **Stop**: Click **STOP**.
+5.  **Action**: Perform your motion.
+6.  **Stop**: Click **STOP**.
 
 
 ### Step C: Processing & Import

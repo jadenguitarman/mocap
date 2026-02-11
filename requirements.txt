@@ -3,12 +3,10 @@ opencv-python
 numpy
 scipy
 python-osc
-pyaudio
+sounddevice
 toml
 flask
 librosa
 pyopenssl
 flask-socketio
 requests
-
-

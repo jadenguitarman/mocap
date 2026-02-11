@@ -55,6 +55,45 @@ def api_stop():
     socketio.emit('stop_recording', {})
     return jsonify({'status': 'stopped'})
 
+@app.route('/api/trigger_calibration', methods=['POST'])
+def api_trigger_calibration():
+    data = request.json
+    count = data.get('count', 0)
+    print(f"[Server] Triggering CALIBRATION capture {count}")
+    socketio.emit('trigger_calibration', {'count': count})
+    return jsonify({'status': 'triggered', 'count': count})
+
+@app.route('/upload_calib', methods=['POST'])
+def upload_calib():
+    if 'video' not in request.files: # Reusing blobl logic, but for image?
+         # Check if it's an image or video blob
+         if 'image' in request.files:
+             file = request.files['image']
+         else:
+             file = request.files['video']
+    else:
+        file = request.files['video']
+
+    # Logic: client sends blob, we save it.
+    # We need a unique ID for the phone (SID?).
+    # Helper: we can get SID from headers or args if client sends it.
+    # Client JS: formData.append('sid', socket.id)
+    
+    sid = request.form.get('sid', 'unknown')
+    count = request.form.get('count', '0')
+    
+    # Dir: calibration_images/mobile_{sid}
+    save_dir = os.path.join("calibration_images", f"mobile_{sid}")
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+        
+    filename = f"img_{int(count):04d}.jpg" # Client should send JPG blob
+    
+    file.save(os.path.join(save_dir, filename))
+    print(f"[Server] Saved calibration image from {sid}: {filename}")
+    return jsonify({'status': 'uploaded'})
+
+
 @socketio.on('connect')
 def test_connect():
     print('[Server] Client connected')

@@ -1,91 +1,118 @@
 
-import pyaudio
-import wave
-import threading
+import sounddevice as sd
 import numpy as np
 import scipy.io.wavfile as wavfile
+import threading
+import time
 import os
+from scipy.signal import find_peaks
 
 class AudioRecorder:
-    def __init__(self, filename="recording.wav", chunk=1024, format=pyaudio.paInt16, channels=1, rate=44100):
+    def __init__(self, filename="recording.wav", device=None, samplerate=44100, channels=1):
         self.filename = filename
-        self.chunk = chunk
-        self.format = format
+        self.device = device
+        self.samplerate = samplerate
         self.channels = channels
-        self.rate = rate
-        self.frames = []
-        self.recording = False
-        self.p = pyaudio.PyAudio()
+        self.recording = []
+        self.is_recording = False
         self.stream = None
-        self.thread = None
-
-    def start(self):
-        self.frames = []
-        self.recording = True
-        self.stream = self.p.open(format=self.format,
-                                  channels=self.channels,
-                                  rate=self.rate,
-                                  input=True,
-                                  frames_per_buffer=self.chunk)
-        self.thread = threading.Thread(target=self._record)
-        self.thread.start()
-        print(f"[Audio] Recording started: {self.filename}")
-
-    def _record(self):
-        while self.recording:
-            try:
-                data = self.stream.read(self.chunk)
-                self.frames.append(data)
-            except Exception as e:
-                print(f"[Audio] Error recording: {e}")
-                break
-
-    def stop(self):
-        self.recording = False
-        if self.thread:
-            self.thread.join()
-        
-        if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-        
-        # Don't terminate PyAudio here if we want to reuse the instance, 
-        # but for a simple app often it's fine. 
-        # self.p.terminate() 
-        
-        self.save()
-        print(f"[Audio] Recording stopped. Saved to {self.filename}")
-
-    def save(self):
-        wf = wave.open(self.filename, 'wb')
-        wf.setnchannels(self.channels)
-        wf.setsampwidth(self.p.get_sample_size(self.format))
-        wf.setframerate(self.rate)
-        wf.writeframes(b''.join(self.frames))
-        wf.close()
+        self.start_time = 0
 
     @staticmethod
-    def find_sync_spike(wav_path, threshold_ratio=0.8):
-        """
-        Analyzes the .wav file for the highest decibel spike.
-        Returns the time in seconds of the spike.
-        """
-        if not os.path.exists(wav_path):
-            print(f"[Audio] File not found: {wav_path}")
-            return None
+    def list_devices():
+        print(sd.query_devices())
+        return sd.query_devices()
 
-        rate, data = wavfile.read(wav_path)
+    def callback(self, indata, frames, time, status):
+        if status:
+            print(status)
+        self.recording.append(indata.copy())
+
+    def start(self):
+        if self.is_recording:
+            return
         
-        # If stereo, convert to mono
-        if len(data.shape) > 1:
-            data = data.mean(axis=1)
+        self.recording = []
+        self.is_recording = True
+        self.start_time = time.time()
+        
+        try:
+            self.stream = sd.InputStream(
+                samplerate=self.samplerate,
+                device=self.device,
+                channels=self.channels,
+                callback=self.callback
+            )
+            self.stream.start()
+            print(f"[Audio] Started recording on device {self.device}...")
+        except Exception as e:
+            print(f"[Audio] Error starting stream: {e}")
+            self.is_recording = False
+
+    def stop(self):
+        if not self.is_recording:
+            return
+
+        self.is_recording = False
+        if self.stream:
+            self.stream.stop()
+            self.stream.close()
+        
+        # Concatenate and Save
+        if self.recording:
+            audio_data = np.concatenate(self.recording, axis=0)
+            wavfile.write(self.filename, self.samplerate, (audio_data * 32767).astype(np.int16))
+            print(f"[Audio] Saved to {self.filename}")
+            return self.analyze_clap(audio_data)
+        return None
+
+    def analyze_clap(self, audio_data):
+        # Flatten to mono if needed
+        if self.channels > 1:
+            audio_data = np.mean(audio_data, axis=1)
+        else:
+            audio_data = audio_data.flatten()
             
         # Normalize
-        data = data / np.max(np.abs(data))
+        audio_data = audio_data / np.max(np.abs(audio_data))
         
-        # Find peak
-        peak_index = np.argmax(np.abs(data))
-        peak_time = peak_index / rate
+        # Find peaks
+        # Threshold: 0.5 (adjustable)
+        peaks, _ = find_peaks(audio_data, height=0.5, distance=self.samplerate*0.5) # Min 0.5s between claps
         
-        print(f"[Audio] Sync spike found at {peak_time:.4f}s")
-        return peak_time
+        if len(peaks) > 0:
+            first_clap_index = peaks[0]
+            first_clap_time = first_clap_index / self.samplerate
+            print(f"[Audio] CLAP DETECTED at {first_clap_time:.4f}s")
+            return first_clap_time
+        else:
+            print("[Audio] No clear clap detected.")
+            return None
+
+    @staticmethod
+    def find_sync_spike(filename):
+        if not os.path.exists(filename):
+            print(f"[Audio] File not found: {filename}")
+            return None
+            
+        try:
+            samplerate, data = wavfile.read(filename)
+            # Use the same logic
+            # Flatten
+            if len(data.shape) > 1:
+                data = np.mean(data, axis=1)
+                
+            data = data / np.max(np.abs(data))
+            peaks, _ = find_peaks(data, height=0.5, distance=samplerate*0.5)
+            
+            if len(peaks) > 0:
+                return peaks[0] / samplerate
+            return None
+        except Exception as e:
+            print(f"[Audio] Error finding sync spike: {e}")
+            return None
+
+
+if __name__ == "__main__":
+    # Test Device Discovery
+    AudioRecorder.list_devices()
