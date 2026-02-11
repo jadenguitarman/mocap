@@ -90,18 +90,31 @@ class MocapApp(ctk.CTk):
         self.label_ip = ctk.CTkLabel(self.main_frame, text=f"Connect Mobile to: https://{self.local_ip}:5000", font=("Arial", 16, "bold"))
         self.label_ip.grid(row=4, column=0, columnspan=2, padx=10, pady=20)
 
-        # Record / Stop Buttons
-        self.btn_record = ctk.CTkButton(self.main_frame, text="RECORD", command=self.start_recording, fg_color="red")
-        self.btn_record.grid(row=5, column=0, padx=10, pady=20, sticky="ew")
+        # Buttons Frame
+        self.btn_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.btn_frame.grid(row=5, column=0, columnspan=2, padx=10, pady=20, sticky="ew")
+        self.btn_frame.grid_columnconfigure(0, weight=1)
+        self.btn_frame.grid_columnconfigure(1, weight=1)
+        self.btn_frame.grid_columnconfigure(2, weight=1)
 
-        self.btn_stop = ctk.CTkButton(self.main_frame, text="STOP", command=self.stop_recording, state="disabled")
-        self.btn_stop.grid(row=5, column=1, padx=10, pady=20, sticky="ew")
+        # Calibrate Button
+        self.btn_calibrate = ctk.CTkButton(self.btn_frame, text="CALIBRATE", command=self.run_calibration_thread, fg_color="blue")
+        self.btn_calibrate.grid(row=0, column=0, padx=5, sticky="ew")
+
+        # Record / Stop Buttons
+        self.btn_record = ctk.CTkButton(self.btn_frame, text="RECORD", command=self.start_recording, fg_color="red")
+        self.btn_record.grid(row=0, column=1, padx=5, sticky="ew")
+
+        self.btn_stop = ctk.CTkButton(self.btn_frame, text="STOP", command=self.stop_recording, state="disabled")
+        self.btn_stop.grid(row=0, column=2, padx=5, sticky="ew")
 
         # Status Status
         self.label_status = ctk.CTkLabel(self.main_frame, text="Ready")
         self.label_status.grid(row=6, column=0, columnspan=2, padx=10, pady=10)
 
         self.is_recording = False
+        self.check_calibration()
+
         
     def get_local_ip(self):
         try:
@@ -138,8 +151,55 @@ class MocapApp(ctk.CTk):
         except Exception as e:
             print(f"[MocapApp] Error triggering server stop: {e}")
 
+    def check_calibration(self):
+        # Check for calibration.npz according to config
+        calib_path = config.get("Calibration", {}).get("save_path", "calibration.npz")
+        if os.path.exists(calib_path):
+            self.btn_record.configure(state="normal")
+            self.label_status.configure(text="Ready (Calibrated)")
+        else:
+            self.btn_record.configure(state="disabled")
+            self.label_status.configure(text="Calibration Missing! Run Calibration.")
+
+    def run_calibration_thread(self):
+        threading.Thread(target=self.run_calibration).start()
+
+    def run_calibration(self):
+        self.btn_calibrate.configure(state="disabled")
+        self.btn_record.configure(state="disabled")
+        self.label_status.configure(text="Calibrating... Follow instructions.")
+        
+        # 1. Capture
+        self.label_status.configure(text="Capturing Images...")
+        # We need to capture from the cameras configured.
+        # simpler to just run the CLI script
+        
+        try:
+            # Run capture (blocking, opens window)
+            cmd_capture = [sys.executable, "src/calibrate_cli.py", "--capture"]
+            subprocess.run(cmd_capture, check=True)
+            
+            # 2. Process
+            self.label_status.configure(text="Processing Calibration...")
+            cmd_process = [sys.executable, "src/calibrate_cli.py", "--process"]
+            subprocess.run(cmd_process, check=True)
+            
+            self.label_status.configure(text="Calibration Complete!")
+            self.after(0, self.check_calibration)
+            
+        except subprocess.CalledProcessError as e:
+            self.label_status.configure(text=f"Calibration Failed: {e}")
+            print(f"Calibration Error: {e}")
+            
+        except Exception as e:
+            self.label_status.configure(text=f"Error: {e}")
+            print(f"Error: {e}")
+            
+        finally:
+             self.btn_calibrate.configure(state="normal")
 
     def start_recording(self):
+
         self.is_recording = True
         self.btn_record.configure(state="disabled")
         self.btn_stop.configure(state="normal")

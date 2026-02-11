@@ -76,19 +76,13 @@ This tool provides a local, low-friction pipeline for markerless motion capture 
 
 ## 5. Calibration (Essential)
 
-1.  **Capture**:
-    Run the capture tool. It will snap synchronized photos from all cameras every 2 seconds.
-    ```bash
-    python src/calibrate_cli.py --capture
-    ```
-    *Tip: Move the ChArUco board around to cover different angles and depths.*
+1.  **Launch App**: `python src/main.py`.
+2.  **Verify**: The "RECORD" button will be disabled if calibration is missing.
+3.  **Click CALIBRATE**:
+    -   Follow the on-screen prompts to capture images.
+    -   The system will process the calibration automatically.
+    -   Once complete, the "RECORD" button will enable.
 
-2.  **Process**:
-    Run the calibration solver.
-    ```bash
-    python src/calibrate_cli.py --process
-    ```
-    This generates `calibration.npz`.
 
 ---
 
