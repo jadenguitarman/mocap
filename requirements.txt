@@ -10,3 +10,4 @@ librosa
 pyopenssl
 flask-socketio
 requests
+Pillow

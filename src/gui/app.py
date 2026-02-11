@@ -15,7 +15,8 @@ import socket
 import requests
 import time
 import cv2
-from PIL import Image, CTkImage
+from PIL import Image
+
 
 import io
 
@@ -104,7 +105,8 @@ class LivePreviewWindow(ctk.CTkToplevel):
                 
                 if img:
                     # Convert to CTkImage
-                    ctk_img = CTkImage(light_image=img, dark_image=img, size=(320, 180))
+                    ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(320, 180))
+
                     self.previews[did].configure(image=ctk_img, text="")
                 else:
                     self.previews[did].configure(text=f"No Signal: {did}")
