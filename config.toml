@@ -5,7 +5,6 @@ unreal_ip = "127.0.0.1"
 unreal_port = 8000
 
 [Camera]
-indices = [0, 1]
 width = 1280
 height = 720
 fps = 30

@@ -46,10 +46,16 @@ class MocapOSC:
         
         # Ping iPhone
         try:
-            param = '-n' if platform.system().lower() == 'windows' else '-c'
+            # Windows uses -n, others use -c. User specified Windows 11.
+            param = '-n' if platform.system().lower() == 'windows' else '-c' 
+            # Force -n for Windows 11 requirement if detection fails? 
+            # platform.system() is usually reliable.
+            
             command = ['ping', param, '1', self.iphone_ip]
             subprocess.check_call(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
             print(f"[Handshake] iPhone at {self.iphone_ip} is reachable.")
+
         except subprocess.CalledProcessError:
             print(f"[Handshake] FAILURE: iPhone at {self.iphone_ip} is unreachable.")
             success = False

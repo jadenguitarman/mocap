@@ -8,8 +8,22 @@
   - Enable "Developer Mode" (for access to all Python API).
   - Add this folder (`.../mocap/unreal`) to your Python Import Paths.
 
-## 2. BP_MocapOrchestrator Setup
+
+
+---
+
+## 2. Live Link Face (iPhone) Setup
+1.  **Network**: Connect iPhone to the same Wi-Fi as your PC.
+2.  **Target IP**: In the Live Link Face app settings, set **Targets > Add Target** to your **PC's Local IP Address** (e.g., `192.168.1.10`).
+3.  **Operation**:
+    -   The Python script sends a "Start Recording" trigger to the iPhone.
+    -   The iPhone records locally and/or streams blendshapes directly to Unreal's Live Link subject.
+
+---
+
+## 3. BP_MocapOrchestrator Setup
 Create a new Actor Blueprint named `BP_MocapOrchestrator` in your scene.
+
 
 ### OSC Listener
 1. Add an **OSC Server** variable (Object Reference).
@@ -28,14 +42,14 @@ In the internal Event Graph:
    - Print String: "Recording Stopped. Triggering Import...".
    - Execute Python Command: `import mocap_watcher; mocap_watcher.start_watching()` (or ensure watcher is running).
 
-## 3. Mocap Watcher Script
+## 4. Mocap Watcher Script
 To have the watcher run automatically:
 1. Open *Project Settings > Plugins > Python*.
 2. Add `mocap_watcher.py` to "Startup Scripts".
    - _Note: Use `import mocap_watcher; mocap_watcher.start_watching()` as the command if adding to startup commands, or just ensuring the module loads if it self-starts._
 3. The script watches `[ProjectDir]/MocapImports` and imports found CSVs to `/Game/Mocap/DT_MocapLive`.
 
-## 4. Control Rig Setup
+## 5. Control Rig Setup
 Modify your MetaHuman or Character Control Rig.
 
 ### Data Table Reader

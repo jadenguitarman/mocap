@@ -125,30 +125,48 @@ class MocapPipeline:
 
         for view in views:
             # Check if we have calibration for this view
-            # Local cams: id is int (0, 1) -> check 'mtx_0', 'rvec_0' etc
-            # Mobile cams: id is filename -> likely not in standard calibration.npz yet.
-            # TODO: Add logic to map mobile filenames to calibration slots if applicable.
-            
-            # For now, only Local cams work for 3D
             if view['type'] == 'local' and calib_data:
-                idx = view['id']
-                if f"mtx_{idx}" in calib_data and f"rvec_{idx}" in calib_data:
-                    K = calib_data[f"mtx_{idx}"]
-                    rvec = calib_data[f"rvec_{idx}"]
-                    tvec = calib_data[f"tvec_{idx}"]
-                    
-                    # Compute P = K [R | t]
-                    R, _ = cv2.Rodrigues(rvec)
-                    # Rt = [R | t] 3x4
-                    Rt = np.hstack((R, tvec))
-                    P = K @ Rt
-                    
-                    projections.append(P)
-                    active_json_dirs.append(json_dirs[idx]) # Only triangulate these
+                idx = str(view['id'])
+                calib_id = idx
+            elif view['type'] == 'mobile' and calib_data:
+                # Mobile filename format: {scene}_{take}_{device_id}_{timestamp}.webm
+                # We need to extract device_id.
+                # But wait, view['id'] IS the filename "scene_take_device_time.webm"
+                parts = view['id'].split('_')
+                # scene_take_device_time.webm
+                # We can't be 100% sure of the split if scene/take have underscores.
+                # But we know the format from server/app.py: f"{scene}_{take}_{device_id}_{timestamp}.webm"
+                # Let's rely on the fact that device_id is likely the 3rd to last part if we split by '_'???
+                # Or better, regex.
+                # Actually, the file naming is a bit loose.
+                # Let's assume standard format.
+                if len(parts) >= 4:
+                    # device_id is parts[-2] if timestamp is last?
+                    # filename: scene_take_sid_timestamp.webm
+                    # sid is parts[-2]
+                    sid = parts[-2]
+                    calib_id = f"mobile_{sid}"
                 else:
-                    print(f"[Pipeline] Skipping View {idx} for 3D (No calibration data)")
+                    calib_id = "unknown"
             else:
-                 print(f"[Pipeline] Skipping View {view['id']} for 3D (Mobile/Uncalibrated)")
+                 calib_id = None
+
+            if calib_id and f"mtx_{calib_id}" in calib_data:
+                K = calib_data[f"mtx_{calib_id}"]
+                rvec = calib_data[f"rvec_{calib_id}"]
+                tvec = calib_data[f"tvec_{calib_id}"]
+                
+                # Compute P = K [R | t]
+                R, _ = cv2.Rodrigues(rvec)
+                Rt = np.hstack((R, tvec))
+                P = K @ Rt
+                
+                projections.append(P)
+                active_json_dirs.append(json_dirs[view['id']]) 
+                print(f"[Pipeline] Added 3D View: {calib_id}")
+            else:
+                print(f"[Pipeline] Skipping View {view['id']} for 3D (No calibration data for {calib_id})")
+
 
         # 4. Read JSONs, Triangulate, Filter
         print(f"[Pipeline] Triangulating with {len(projections)} views...")
@@ -169,7 +187,14 @@ class MocapPipeline:
             json_files = sorted(glob.glob(os.path.join(first_dir, "*_keypoints.json")))
             num_frames = len(json_files)
             
-            # TODO: Handle frame count mismatch between cameras (take min or max?) -> Use min to be safe
+            # Frame Count Strategy: USE MINIMUM
+            # Reasoning: Triangulation requires valid data from ALL calibrated cameras simultaneously.
+            # If one camera stops early, we cannot resolve the 3D position reliably (or at all for 2-cam setups)
+            # without complex missing-marker handling.
+            # Therefore, the valid interaction period is the intersection of all camera timelines.
+            num_frames = min([len(glob.glob(os.path.join(d, "*_keypoints.json"))) for d in active_json_dirs])
+            print(f"[Pipeline] Processing {num_frames} frames (limited by shortest video).")
+
             
             for f in range(start_frame, num_frames):
                 frame_points = [] # List of point lists for this frame

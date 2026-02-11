@@ -11,8 +11,106 @@ from processing.pipeline import MocapPipeline
 from utils.config import config
 import tkinter.messagebox as msgbox
 import socket
+import socket
 import requests
 import time
+import cv2
+from PIL import Image, CTkImage
+
+import io
+
+class LivePreviewWindow(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Live Camera Preview")
+        self.geometry("800x600")
+        self.parent = parent
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        
+        self.scroll = ctk.CTkScrollableFrame(self)
+        self.scroll.grid(row=0, column=0, sticky="nsew")
+        
+        self.previews = {} # id -> label
+        self.running = True
+        self.update_thread = threading.Thread(target=self.update_loop)
+        self.update_thread.start()
+        
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def on_close(self):
+        self.running = False
+        self.destroy()
+
+    def update_loop(self):
+        while self.running:
+            # Iterate over enabled devices from parent
+            # Parent should have 'active_devices' list or dict
+            if not hasattr(self.parent, 'get_enabled_devices'):
+                time.sleep(1)
+                continue
+                
+            devices = self.parent.get_enabled_devices() 
+            # devices = [{'id': '0', 'type': 'local'}, {'id': 'sid..', 'type': 'mobile'}]
+            
+            current_ids = [str(d['id']) for d in devices]
+            
+            # Remove stale previews
+            for pid in list(self.previews.keys()):
+                if pid not in current_ids:
+                    self.previews[pid].pack_forget() # grid_forget?
+                    self.previews[pid].destroy()
+                    del self.previews[pid]
+            
+            # Add/Update previews
+            for dev in devices:
+                did = str(dev['id'])
+                dtype = dev['type']
+                
+                if did not in self.previews:
+                    # Create new label
+                    lbl = ctk.CTkLabel(self.scroll, text=f"Loading {did}...")
+                    lbl.pack(padx=5, pady=5, side="left", fill="both", expand=True) # Simple pack implementation
+                    self.previews[did] = lbl
+                
+                # Fetch Frame
+                img = None
+                if dtype == 'local':
+                    # Capture local frame
+                    try:
+                        cap = cv2.VideoCapture(int(did))
+                        if cap.isOpened():
+                            ret, frame = cap.read()
+                            if ret:
+                                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                                frame = cv2.resize(frame, (320, 180))
+                                img = Image.fromarray(frame)
+                            cap.release()
+                    except:
+                        pass
+                elif dtype == 'mobile':
+                    # Fetch from server
+                    try:
+                        # Assuming server is local
+                        url = f"http://127.0.0.1:5000/api/preview/{did}"
+                        # Check adhoc ssl
+                        # requests verify false
+                        res = requests.get(url.replace("http", "https"), verify=False, timeout=0.1)
+                        if res.status_code == 200:
+                            img_bytes = io.BytesIO(res.content)
+                            img = Image.open(img_bytes)
+                    except:
+                        pass
+                
+                if img:
+                    # Convert to CTkImage
+                    ctk_img = CTkImage(light_image=img, dark_image=img, size=(320, 180))
+                    self.previews[did].configure(image=ctk_img, text="")
+                else:
+                    self.previews[did].configure(text=f"No Signal: {did}")
+            
+            time.sleep(0.2) # Update rate
+
 
 
 
@@ -23,9 +121,11 @@ class MocapApp(ctk.CTk):
         super().__init__()
 
         self.title("Mocap Controller")
-        self.geometry("600x450")
+        self.title("Mocap Controller")
+        self.geometry("800x600")
         
         # Start Flask Server Subprocess
+
         self.server_process = None
         self.start_server()
         
@@ -71,16 +171,20 @@ class MocapApp(ctk.CTk):
         self.entry_take.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
         self.entry_take.insert(0, "001")
 
-        # Camera Indices
-        self.label_cams = ctk.CTkLabel(self.main_frame, text="Camera Indices (comma-separated):")
-        self.label_cams.grid(row=2, column=0, padx=10, pady=10, sticky="w")
-        self.entry_cams = ctk.CTkEntry(self.main_frame)
-        self.entry_cams.grid(row=2, column=1, padx=10, pady=10, sticky="ew")
+        # Camera Selection (Scrollable)
+        self.label_cams = ctk.CTkLabel(self.main_frame, text="Connected Devices:")
+        self.label_cams.grid(row=2, column=0, padx=10, pady=10, sticky="nw")
         
-        # Load default cams from config
-        default_cams = config.get("Camera", {}).get("indices", [0, 1])
-        default_cams_str = ", ".join(map(str, default_cams))
-        self.entry_cams.insert(0, default_cams_str) 
+        self.scroll_devices = ctk.CTkScrollableFrame(self.main_frame, height=150)
+        self.scroll_devices.grid(row=2, column=1, padx=10, pady=10, sticky="ew")
+        
+        self.device_checkboxes = {} # id -> checkbox
+        self.discovered_devices = [] # list of dicts {id, type, name}
+        
+        # Refresh Button
+        self.btn_refresh = ctk.CTkButton(self.main_frame, text="Refresh Devices", command=self.refresh_devices)
+        self.btn_refresh.grid(row=2, column=2, padx=5, pady=10)
+ 
         
         # Audio Device Selection
 
@@ -122,7 +226,10 @@ class MocapApp(ctk.CTk):
         self.label_status.grid(row=6, column=0, columnspan=2, padx=10, pady=10)
 
         self.is_recording = False
-        self.check_calibration()
+        
+        self.preview_window = LivePreviewWindow(self)
+        self.refresh_devices()
+
 
         
     def get_local_ip(self):
@@ -159,24 +266,72 @@ class MocapApp(ctk.CTk):
                 self.combo_mic.set(mic_names[0])
         except Exception as e:
             print(f"Error listing mics: {e}")
+    
+    def get_enabled_devices(self):
+        enabled = []
+        for dev in self.discovered_devices:
+            did = str(dev['id'])
+            if did in self.device_checkboxes and self.device_checkboxes[did].get() == 1:
+                enabled.append(dev)
+        return enabled
+
+    def refresh_devices(self):
+        # Clear existing checkboxes
+        for cb in self.device_checkboxes.values():
+            cb.destroy()
+        self.device_checkboxes = {}
+        self.discovered_devices = []
+        
+        # 1. Discover Local Cams
+        # Brute force 0-5
+        for i in range(5):
+            try:
+                cap = cv2.VideoCapture(i)
+                if cap.isOpened():
+                    self.discovered_devices.append({'id': i, 'type': 'local', 'name': f"Local Cam {i}"})
+                    cap.release()
+            except:
+                pass
+                
+        # 2. Discover Remote Cams
+        try:
+            url = "https://127.0.0.1:5000/api/devices"
+            res = requests.get(url, verify=False, timeout=1)
+            if res.status_code == 200:
+                mobiles = res.json()
+                for m in mobiles:
+                    self.discovered_devices.append({'id': m['sid'], 'type': 'mobile', 'name': f"Mobile {m['address']}"})
+        except Exception as e:
+            print(f"Error fetching mobile devices: {e}")
+            
+        # Repopulate
+        for dev in self.discovered_devices:
+            did = str(dev['id'])
+            name = dev['name']
+            cb = ctk.CTkCheckBox(self.scroll_devices, text=name)
+            cb.pack(anchor="w", padx=5, pady=2)
+            cb.select() # Default enable
+            self.device_checkboxes[did] = cb
 
     def start_server(self):
 
         print("[MocapApp] Launching Flask Server...")
         # Ad-hoc SSL is used in app.py
-        cmd = [sys.executable, "src/server/app.py"]
-        self.server_process = subprocess.Popen(cmd)
-        
-    def trigger_server_start(self, scene, take):
         try:
-            url = "http://127.0.0.1:5000/api/start" # Server runs on HTTP internally locally? 
-            # Wait, app.py runs with ssl_context='adhoc', so it is HTTPS even locally?
-            # Flask-SocketIO with adhoc ssl means it is HTTPS.
-            # We need to verify verify=False for self-signed
+            cmd = [sys.executable, "src/server/app.py"]
+            self.server_process = subprocess.Popen(cmd)
+        except Exception as e:
+            print(f"[MocapApp] Failed to start server: {e}")
+            msgbox.showerror("Error", f"Failed to start server subprocess:\n{e}")
+
+        
+    def trigger_server_start(self, scene, take, target_sids=None):
+        try:
             url = "https://127.0.0.1:5000/api/start"
-            requests.post(url, json={'scene': scene, 'take': take}, verify=False)
+            requests.post(url, json={'scene': scene, 'take': take, 'devices': target_sids}, verify=False)
         except Exception as e:
             print(f"[MocapApp] Error triggering server start: {e}")
+
 
     def trigger_server_stop(self):
         try:
@@ -277,9 +432,19 @@ class MocapApp(ctk.CTk):
         
         # Start Video Subprocesses
         self.video_processes = []
+        
+        # Trigger Mobile Nodes (Only enabled ones)
+        # Filter mobile SIDs
+        enabled_devs = self.get_enabled_devices()
+        mobile_sids = [d['id'] for d in enabled_devs if d['type'] == 'mobile']
+        self.trigger_server_start(scene, take, mobile_sids)
+
+        # Start Video Subprocesses (Local)
+        self.video_processes = []
+        local_indices = [d['id'] for d in enabled_devs if d['type'] == 'local']
+        
         try:
-            cam_indices = [int(x.strip()) for x in self.entry_cams.get().split(',')]
-            for idx in cam_indices:
+            for idx in local_indices:
                 vid_filename = f"{scene}_{take}_cam{idx}.mp4"
                 if os.path.exists(vid_filename + ".stop"):
                     os.remove(vid_filename + ".stop")
@@ -293,8 +458,8 @@ class MocapApp(ctk.CTk):
         # Trigger OSC
         self.osc_client.start_recording(scene, take)
         
-        # Trigger Mobile Nodes
-        self.trigger_server_start(scene, take)
+        
+
 
 
 
@@ -351,10 +516,10 @@ class MocapApp(ctk.CTk):
         scene = self.entry_scene.get()
         take = self.entry_take.get()
         
-        try:
-            cam_indices = [int(x.strip()) for x in self.entry_cams.get().split(',')]
-        except ValueError:
-            cam_indices = []
+
+        enabled_devs = self.get_enabled_devices()
+        cam_indices = [d['id'] for d in enabled_devs if d['type'] == 'local']
+
 
         threading.Thread(target=self.run_processing, args=(scene, take, cam_indices)).start()
 
@@ -387,7 +552,11 @@ class MocapApp(ctk.CTk):
     def on_closing(self):
         if self.server_process:
             self.server_process.terminate()
+        if hasattr(self, 'preview_window') and self.preview_window:
+            self.preview_window.running = False
+            self.preview_window.destroy()
         self.destroy()
+
 
 if __name__ == "__main__":
     app = MocapApp()

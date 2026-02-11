@@ -107,7 +107,11 @@ async function initCamera() {
     // Initialize socket once camera is ready
     initSocket();
 
+    // Start Preview Loop (5 FPS)
+    setInterval(sendPreview, 200);
+
   } catch (err) {
+
     statusDiv.innerText = "Error: " + err;
     console.error(err);
   }
@@ -191,6 +195,29 @@ function uploadCalibrationImage(count) {
       });
   }, 'image/jpeg', 0.95);
 }
+
+
+function sendPreview() {
+  const video = document.querySelector('video');
+  if (!video) return;
+
+  // Check if socket connected
+  if (!socket || !socket.connected) return;
+
+  const canvas = document.createElement('canvas');
+  // Low res for preview
+  canvas.width = 320;
+  canvas.height = 180;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  canvas.toBlob(function (blob) {
+    socket.emit('preview_frame', blob);
+  }, 'image/jpeg', 0.5);
+}
+
+btnRec.onclick = startRecording;
+
 
 btnRec.onclick = startRecording;
 

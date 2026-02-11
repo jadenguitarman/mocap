@@ -22,8 +22,9 @@ This tool provides a local, low-friction pipeline for markerless motion capture 
 ### Hardware
 - **PC**: Windows 10/11 (Linux/Mac support experimental).
 - **GPU**: NVIDIA GPU with 8GB+ VRAM recommended (for OpenPose).
-- **Cameras**: 2 or more webcams (Logitech C920, Brio, etc.) connected via USB.
-  - *Tip*: Ensure USB bandwidth is sufficient. Use multiple controllers if possible.
+- **Cameras**: 
+    - **Local**: 2 or more webcams (Logitech C920, Brio, etc.) connected via USB.
+    - **Mobile**: Any modern smartphone with a web browser (iOS/Android).
 - **iPhone**: For facial capture (optional), running Live Link Face.
 - **Calibration Board**: ChArUco board printed and mounted on a flat surface.
 
@@ -52,10 +53,11 @@ This tool provides a local, low-friction pipeline for markerless motion capture 
 3.  **Install OpenPose**:
     -   Download OpenPose from the [official repository](https://github.com/CMU-Perceptual-Computing-Lab/openpose).
     -   Place the `OpenPoseDemo.exe` and `models/` folder in a known location.
-    -   **Configuration**: Update `src/processing/pipeline.py` with the absolute path to your `OpenPoseDemo.exe` if it's not in `bin/`.
+    -   **Configuration**: Update `config.toml` with the path to your `OpenPoseDemo.exe` (defaults to `bin/OpenPoseDemo.exe`).
+    -   **Note**: The system will attempt to auto-detect OpenPose if it's in your system PATH.
 
 4.  **Unreal Engine Verification**:
-    -   Ensure you have the "Python Editor Script Plugin", "OSC", and "Takes" plugins enabled.
+    -   Ensure you have the "OSC", "Takes", and "Python Editor Script Plugin" plugins enabled.
 
 ---
 
@@ -65,12 +67,14 @@ This tool provides a local, low-friction pipeline for markerless motion capture 
 
 ### Network Setup (OSC)
 -   Edit `[Network]` section in `config.toml`.
--   **iphone_ip**: Set to your iPhone's IP address (Settings > Wi-Fi).
+-   **iphone_ip**: Set to your iPhone's IP address (Settings > Wi-Fi) so the *script can trigger it*.
 -   **unreal_ip**: Usually `127.0.0.1`.
+-   **Important**: In the Live Link Face app on your iPhone, set the **Target IP** to your **PC's IP Address** (not the phone's). The app streams facial data *directly* to Unreal, not through this script.
+
 
 ### Camera Setup
--   Edit `[Camera]` section in `config.toml`.
--   **indices**: List of camera IDs, e.g., `[0, 1]`.
+-   Edit `[Camera]` section in `config.toml` for defaults (resolution, fps).
+-   **Indices** are no longer needed; cameras are auto-discovered.
 
 ---
 
@@ -82,7 +86,6 @@ This tool provides a local, low-friction pipeline for markerless motion capture 
     -   Follow the on-screen prompts to capture images.
     -   The system will process the calibration automatically.
     -   Once complete, the "RECORD" button will enable.
-
 
 ---
 
@@ -99,12 +102,9 @@ This tool provides a local, low-friction pipeline for markerless motion capture 
     -   When you hit **RECORD** in the Python App, all connected phones start recording.
     -   When you hit **STOP**, they stop and upload their video.
 
-
 ---
 
 ## 7. Unreal Engine Integration
-
-
 
 A detailed setup guide is available in `unreal/UNREAL_SETUP.md`.
 
@@ -119,25 +119,25 @@ A detailed setup guide is available in `unreal/UNREAL_SETUP.md`.
 
 ---
 
-## 7. Usage Workflow
+## 8. Usage Workflow
 
 ### Step B: Recording
 1.  **Launch the Controller**:
     ```bash
-    python3 src/main.py
-
+    python src/main.py
     ```
-2.  **Check Settings**:
-    -   Scene Name, Take Number.
-    -   **Select Microphone**: Choose your primary audio input (e.g., "External Microphone").
-    -   Cameras are pre-loaded from config.
-3.  **Connect Mobile**:
-    -   Open the displayed URL on your phones.
-4.  **Clap Sync**:
+2.  **Device Setup**:
+    -   **Local**: Click "Refresh Devices" to find USB webcams.
+    -   **Mobile**: Open the displayed URL (e.g., `https://192.168.1.5:5000`) on your phone. It will appear in the list.
+    -   **Enable**: Check the boxes for the devices you want to use.
+    -   **Preview**: A "Live Preview" window will open. Verify branding and framing.
+
+3.  **Recording**:
+    -   Enter Scene Name and Take Number.
     -   Click **RECORD**.
-    -   **CLAP LOUDLY** once.
-5.  **Action**: Perform your motion.
-6.  **Stop**: Click **STOP**.
+    -   **CLAP LOUDLY** once for sync.
+    -   Perform your motion.
+    -   Click **STOP**.
 
 
 ### Step C: Processing & Import
@@ -158,10 +158,10 @@ A detailed setup guide is available in `unreal/UNREAL_SETUP.md`.
 
 ---
 
-## 7. Troubleshooting
+## 9. Troubleshooting
 
 ### "OpenPose binary not found"
--   Check the path in `src/processing/pipeline.py`.
+-   Check the path in `config.toml` or `bin/`.
 -   Ensure OpenPose runs correctly from the command line first.
 
 ### "No sync spike found"
@@ -179,7 +179,7 @@ A detailed setup guide is available in `unreal/UNREAL_SETUP.md`.
 
 ---
 
-## 8. Developer Notes
+## 10. Developer Notes
 
 -   **Architecture**: Modular design (Capture, Processing, GUI, OSC).
 -   **Extensibility**:

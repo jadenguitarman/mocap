@@ -19,8 +19,9 @@ def record_camera(index, filename, width=1280, height=720, fps=30):
         return
 
     # Define the codec and create VideoWriter object
-    # using mp4v for compatibility
+    # using mp4v for compatibility on Windows
     fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
+
     out = cv2.VideoWriter(filename, fourcc, fps, (width, height))
 
     print(f"Recording from Camera {index} to {filename}...")
