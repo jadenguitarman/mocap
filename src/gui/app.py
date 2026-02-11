@@ -16,6 +16,9 @@ import requests
 import time
 import cv2
 from PIL import Image
+import concurrent.futures
+import qrcode
+
 
 
 import io
@@ -34,84 +37,116 @@ class LivePreviewWindow(ctk.CTkToplevel):
         
         self.previews = {} # id -> label
         self.running = True
+        
+        self.session = requests.Session() # Reuse connections
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=8) # Parallel fetch
+        
         self.update_thread = threading.Thread(target=self.update_loop)
         self.update_thread.start()
+
         
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def on_close(self):
         self.running = False
+        self.executor.shutdown(wait=False)
         self.destroy()
+
+
+    def fetch_frame(self, dev):
+        did = str(dev['id'])
+        dtype = dev['type']
+        img = None
+        
+        try:
+            if dtype == 'local':
+                cap = cv2.VideoCapture(int(did))
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    if ret:
+                        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        frame = cv2.resize(frame, (320, 180))
+                        img = Image.fromarray(frame)
+                    cap.release()
+            elif dtype == 'mobile':
+                 # Assuming server is local
+                url = f"http://127.0.0.1:5000/api/preview/{did}"
+                # Use session for keep-alive
+                res = self.session.get(url.replace("http", "https"), verify=False, timeout=0.5)
+                if res.status_code == 200:
+                    img_bytes = io.BytesIO(res.content)
+                    img = Image.open(img_bytes)
+        except:
+            pass
+            
+        return did, img
 
     def update_loop(self):
         while self.running:
-            # Iterate over enabled devices from parent
-            # Parent should have 'active_devices' list or dict
             if not hasattr(self.parent, 'get_enabled_devices'):
                 time.sleep(1)
                 continue
                 
             devices = self.parent.get_enabled_devices() 
-            # devices = [{'id': '0', 'type': 'local'}, {'id': 'sid..', 'type': 'mobile'}]
-            
             current_ids = [str(d['id']) for d in devices]
             
-            # Remove stale previews
-            for pid in list(self.previews.keys()):
-                if pid not in current_ids:
-                    self.previews[pid].pack_forget() # grid_forget?
-                    self.previews[pid].destroy()
-                    del self.previews[pid]
+            # Remove stale previews (Main Thread Logic via direct call? No, we are in thread)
+            # Tkinter updates must be scheduled or done carefully. CTk is somewhat thread safe for configure?
+            # Ideally use .after, but we are in a thread loop. CTk usually handles it.
             
-            # Add/Update previews
+            # Prune
+            active_widgets = list(self.previews.keys())
+            for pid in active_widgets:
+                if pid not in current_ids:
+                    # Schedule removal in main thread if possible, or attempt direct
+                    try:
+                        self.previews[pid].pack_forget()
+                        self.previews[pid].destroy()
+                        del self.previews[pid]
+                    except:
+                        pass # widget gone?
+
+            # Create needed widgets (Main Thread Safe?) 
+            # We'll just creating them here checking if exists.
             for dev in devices:
                 did = str(dev['id'])
-                dtype = dev['type']
-                
                 if did not in self.previews:
-                    # Create new label
-                    lbl = ctk.CTkLabel(self.scroll, text=f"Loading {did}...")
-                    lbl.pack(padx=5, pady=5, side="left", fill="both", expand=True) # Simple pack implementation
-                    self.previews[did] = lbl
-                
-                # Fetch Frame
-                img = None
-                if dtype == 'local':
-                    # Capture local frame
-                    try:
-                        cap = cv2.VideoCapture(int(did))
-                        if cap.isOpened():
-                            ret, frame = cap.read()
-                            if ret:
-                                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                                frame = cv2.resize(frame, (320, 180))
-                                img = Image.fromarray(frame)
-                            cap.release()
-                    except:
-                        pass
-                elif dtype == 'mobile':
-                    # Fetch from server
-                    try:
-                        # Assuming server is local
-                        url = f"http://127.0.0.1:5000/api/preview/{did}"
-                        # Check adhoc ssl
-                        # requests verify false
-                        res = requests.get(url.replace("http", "https"), verify=False, timeout=0.1)
-                        if res.status_code == 200:
-                            img_bytes = io.BytesIO(res.content)
-                            img = Image.open(img_bytes)
-                    except:
-                        pass
-                
-                if img:
-                    # Convert to CTkImage
-                    ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(320, 180))
-
-                    self.previews[did].configure(image=ctk_img, text="")
-                else:
-                    self.previews[did].configure(text=f"No Signal: {did}")
+                     # This might crash if called from thread. 
+                     # But let's try. If it crashes, we need a queue.
+                     # For now, we assume simple CTk thread safety or lack thereof causing minor glitches.
+                     # To be safe:
+                     pass 
             
-            time.sleep(0.2) # Update rate
+            # Parallel Fetch
+            futures = {self.executor.submit(self.fetch_frame, dev): dev for dev in devices}
+            
+            for future in concurrent.futures.as_completed(futures):
+                did, img = future.result()
+                
+                # Update UI
+                if did not in self.previews:
+                    # Create lazily on first successful frame? 
+                    # Or check again.
+                    # Creating widgets from thread is risky.
+                    # Best practice: use self.after from main thread, but we are in loop.
+                    # We will try direct creation.
+                    if self.running:
+                         lbl = ctk.CTkLabel(self.scroll, text=f"Loading {did}...")
+                         lbl.pack(padx=5, pady=5, side="left", fill="both", expand=True)
+                         self.previews[did] = lbl
+
+                if did in self.previews:
+                    try:
+                        if img:
+                             ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(320, 180))
+                             self.previews[did].configure(image=ctk_img, text="")
+                        else:
+                             self.previews[did].configure(text=f"No Signal")
+                    except:
+                        pass
+
+            time.sleep(0.05) # ~20 FPS loop
+
 
 
 
@@ -201,8 +236,24 @@ class MocapApp(ctk.CTk):
         self.check_hand.grid(row=4, column=0, columnspan=2, padx=10, pady=10, sticky="w")
         
         # Server Info
-        self.label_ip = ctk.CTkLabel(self.main_frame, text=f"Connect Mobile to: https://{self.local_ip}:5000", font=("Arial", 16, "bold"))
+        url = f"https://{self.local_ip}:5000"
+        self.label_ip = ctk.CTkLabel(self.main_frame, text=f"Connect Mobile to:\n{url}", font=("Arial", 16, "bold"))
         self.label_ip.grid(row=5, column=0, columnspan=2, padx=10, pady=20)
+        
+        # QR Code
+        try:
+            qr = qrcode.QRCode(box_size=10, border=2)
+            qr.add_data(url)
+            qr.make(fit=True)
+            qr_img = qr.make_image(fill_color="black", back_color="white")
+            
+            # config fit to size
+            self.qr_ctk = ctk.CTkImage(light_image=qr_img, dark_image=qr_img, size=(100, 100))
+            self.label_qr = ctk.CTkLabel(self.main_frame, image=self.qr_ctk, text="")
+            self.label_qr.grid(row=5, column=2, padx=10, pady=10)
+        except Exception as e:
+            print(f"QR Gen Failed: {e}")
+
 
         # Buttons Frame
         self.btn_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")

@@ -107,8 +107,9 @@ async function initCamera() {
     // Initialize socket once camera is ready
     initSocket();
 
-    // Start Preview Loop (5 FPS)
-    setInterval(sendPreview, 200);
+    // Start Preview Loop (10 FPS)
+    setInterval(sendPreview, 100);
+
 
   } catch (err) {
 
