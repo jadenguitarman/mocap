@@ -38,7 +38,9 @@ class LivePreviewWindow(ctk.CTkToplevel):
         self.previews = {} # id -> label
         self.running = True
         
+        self.caps = {} # id -> cv2.VideoCapture (Persistent)
         self.session = requests.Session() # Reuse connections
+
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=8) # Parallel fetch
         
         self.update_thread = threading.Thread(target=self.update_loop)
@@ -49,8 +51,13 @@ class LivePreviewWindow(ctk.CTkToplevel):
 
     def on_close(self):
         self.running = False
+        self.running = False
         self.executor.shutdown(wait=False)
+        # Release caps
+        for cap in self.caps.values():
+            cap.release()
         self.destroy()
+
 
 
     def fetch_frame(self, dev):
@@ -60,14 +67,24 @@ class LivePreviewWindow(ctk.CTkToplevel):
         
         try:
             if dtype == 'local':
-                cap = cv2.VideoCapture(int(did))
+                # Use persistent capture
+                if did not in self.caps:
+                    self.caps[did] = cv2.VideoCapture(int(did))
+                    # Warmup
+                    self.caps[did].read()
+                
+                cap = self.caps[did]
                 if cap.isOpened():
                     ret, frame = cap.read()
                     if ret:
                         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         frame = cv2.resize(frame, (320, 180))
                         img = Image.fromarray(frame)
-                    cap.release()
+                    else:
+                        # Try re-open if failed
+                        cap.release()
+                        del self.caps[did]
+
             elif dtype == 'mobile':
                  # Assuming server is local
                 url = f"http://127.0.0.1:5000/api/preview/{did}"
@@ -245,7 +262,11 @@ class MocapApp(ctk.CTk):
             qr = qrcode.QRCode(box_size=10, border=2)
             qr.add_data(url)
             qr.make(fit=True)
-            qr_img = qr.make_image(fill_color="black", back_color="white")
+            # qrcode.make_image returns a PilImage wrapper. We need the internal image.
+            # Usually .get_image() works for factory=PilImage
+            qr_img_wrapper = qr.make_image(fill_color="black", back_color="white")
+            qr_img = qr_img_wrapper.get_image()
+
             
             # config fit to size
             self.qr_ctk = ctk.CTkImage(light_image=qr_img, dark_image=qr_img, size=(100, 100))
