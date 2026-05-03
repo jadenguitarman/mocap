@@ -44,19 +44,31 @@ This tool provides a local, low-friction pipeline for markerless motion capture 
     cd mocap
     ```
 
-2.  **Install Python Dependencies**:
-    ```bash
-    pip install -r requirements.txt
+2.  **Create a Python Environment**:
+    Install Python 3.10 or 3.11 for Windows and make sure `python` is available in a new PowerShell window:
+    ```powershell
+    python --version
     ```
-    *Dependencies include: `customtkinter`, `opencv-python`, `numpy`, `scipy`, `python-osc`, `pyaudio`.*
+    Then create a local virtual environment:
+    ```powershell
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+    python -m pip install --upgrade pip
+    ```
 
-3.  **Install OpenPose**:
+3.  **Install Python Dependencies**:
+    ```bash
+    python -m pip install -r requirements.txt
+    ```
+    *Dependencies include: `customtkinter`, `opencv-python`, `numpy`, `scipy`, `python-osc`, `sounddevice`, `flask`, `flask-socketio`, `librosa`, and `pyopenssl`.*
+
+4.  **Install OpenPose**:
     -   Download OpenPose from the [official repository](https://github.com/CMU-Perceptual-Computing-Lab/openpose).
     -   Place the `OpenPoseDemo.exe` and `models/` folder in a known location.
     -   **Configuration**: Update `config.toml` with the path to your `OpenPoseDemo.exe` (defaults to `bin/OpenPoseDemo.exe`).
     -   **Note**: The system will attempt to auto-detect OpenPose if it's in your system PATH.
 
-4.  **Unreal Engine Verification**:
+5.  **Unreal Engine Verification**:
     -   Ensure you have the "OSC", "Takes", and "Python Editor Script Plugin" plugins enabled.
 
 ---
@@ -168,14 +180,10 @@ A detailed setup guide is available in `unreal/UNREAL_SETUP.md`.
 -   Ensure your microphone was active and the clap was distinct (loudest peak in the recording).
 -   Check `src/capture/audio.py` logic.
 
-### "Cameras fail to open"
--   Check if another app (Zoom, Teams, Discord) is using the webcam.
--   Check USB bandwidth limits.
-
-### "Unreal doesn't import"
--   Check the Output Log in Unreal for "Python" messages.
--   Ensure `mocap_watcher` is running.
--   Verify the path `MocapImports` matches where the tool saves CSVs.
+### "Mobile Camera Permission Denied"
+-   **Secure Context**: Chrome requires a "Secure Context" for camera access. Since the tool uses a self-signed certificate, you MUST click **"Advanced"** -> **"Proceed to [IP] (unsafe)"** when the warning appears.
+-   **User Gesture**: The camera will not start until you click the **"ENABLE CAMERA & JOIN"** button on your phone.
+-   **Chrome Workaround**: If it still fails, you can force Chrome to trust your PC's IP. On your phone's Chrome, go to `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, enter `https://YOUR_PC_IP:5000` (replacing YOUR_PC_IP), enable it, and relaunch Chrome.
 
 ---
 

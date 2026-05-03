@@ -1,74 +1,90 @@
 
 import librosa
-import numpy as np
 import os
-import json
 
 class AudioAligner:
-    def __init__(self):
-        pass
+    def __init__(self, min_sync_gap=1.0):
+        self.min_sync_gap = min_sync_gap
 
-    def find_onset(self, audio_path):
+    def find_onsets(self, audio_path):
         """
-        Finds the first significant onset (clap) in the audio file.
-        Returns the time in seconds.
+        Finds significant sync onsets in the audio file.
+        Returns onset times in seconds.
         """
         if not os.path.exists(audio_path):
-            print(f"[Aligner] Error: File nt found {audio_path}")
-            return None
+            print(f"[Aligner] Error: File not found {audio_path}")
+            return []
 
-        # Load audio (mono)
-        y, sr = librosa.load(audio_path, sr=None, mono=True)
-        
-        # Detect onsets
-        onset_frames = librosa.onset.onset_detect(y=y, sr=sr, backtrack=True)
-        onset_times = librosa.frames_to_time(onset_frames, sr=sr)
-        
-        if len(onset_times) > 0:
-            # Assume the first distinct onset is the clap
-            # Could add logic to find the *loudest* onset if needed
-            return onset_times[0]
-            
+        try:
+            y, sr = librosa.load(audio_path, sr=None, mono=True)
+            onset_frames = librosa.onset.onset_detect(y=y, sr=sr, backtrack=True)
+            onset_times = librosa.frames_to_time(onset_frames, sr=sr)
+            filtered = []
+            for onset in onset_times:
+                if not filtered or onset - filtered[-1] >= self.min_sync_gap:
+                    filtered.append(float(onset))
+            return filtered
+        except Exception as e:
+            print(f"[Aligner] WARNING: Could not load {audio_path}. Error: {e}")
+            print(f"[Aligner] HINT: Ensure FFmpeg is installed and added to PATH for WebM support.")
+
+        return []
+
+    def find_onset(self, audio_path):
+        onsets = self.find_onsets(audio_path)
+        if onsets:
+            return onsets[0]
         return None
+
+    def get_duration(self, audio_path):
+        if not os.path.exists(audio_path):
+            return None
+        try:
+            return librosa.get_duration(path=audio_path)
+        except Exception as e:
+            print(f"[Aligner] WARNING: Could not read duration for {audio_path}. Error: {e}")
+            return None
 
     def calculate_offsets(self, reference_path, mobile_paths):
         """
         Calculates time offsets for a list of mobile audio files relative to a reference (PC) audio.
-        Returns a dict {filename: offset_seconds, drift_factor: 1.0}
+        Returns a dict {filename: offset_seconds, drift_factor}.
+        Requires two sync onsets in every stream so clock drift can be solved.
         """
-        ref_onset = self.find_onset(reference_path)
-        if ref_onset is None:
-            print("[Aligner] No onset found in reference audio.")
+        ref_onsets = self.find_onsets(reference_path)
+        if len(ref_onsets) < 2:
+            print("[Aligner] Need two sync onsets in reference audio: one start clap/blip and one end clap/blip.")
             return {}
+        ref_onset = ref_onsets[0]
 
         offsets = {}
         for path in mobile_paths:
-            mob_onset = self.find_onset(path)
-            if mob_onset:
-                # If mobile onset is at 5s and ref is at 2s, mobile started 3s EARLY? 
-                # Wait. 
-                # Event happened at RealTime T.
-                # Ref recording started at T_ref_start. Onset is at T - T_ref_start.
-                # Mob recording started at T_mob_start. Onset is at T - T_mob_start.
-                # Offset = (T - T_mob_start) - (T - T_ref_start) = T_ref_start - T_mob_start
-                # Actually we just want to know: To sync Mobile to Ref, shift Mobile by X.
-                # Shift = Ref_Onset_Time - Mob_Onset_Time
-                
+            mob_onsets = self.find_onsets(path)
+            if len(mob_onsets) >= 2:
+                mob_onset = mob_onsets[0]
                 offset = ref_onset - mob_onset
+                drift_factor = self.get_drift(ref_onsets, mob_onsets)
                 offsets[os.path.basename(path)] = {
                     "time_offset": offset,
-                    "drift_factor": 1.0 # Placeholder for linear drift calculation
+                    "drift_factor": drift_factor
                 }
-                print(f"[Aligner] {os.path.basename(path)} offset: {offset:.4f}s")
+                print(f"[Aligner] {os.path.basename(path)} offset: {offset:.4f}s, drift: {drift_factor:.6f}")
             else:
-                print(f"[Aligner] No onset for {os.path.basename(path)}")
+                print(f"[Aligner] Need two sync onsets for {os.path.basename(path)}.")
         
         return offsets
 
-    def get_drift(self, ref_duration, mob_duration):
-        # Naive drift: ratio of durations? 
-        # Only works if we know they recorded the EXACT same real-time span.
-        # But they started/stopped at different times.
-        # Drift correction requires TWO sync points (Clap Start + Clap End).
-        # For now, we assume 1.0 (modern clocks are decent enough for short takes).
+    def get_drift(self, ref_onsets, mob_onsets):
+        if len(ref_onsets) < 2 or len(mob_onsets) < 2:
+            return 1.0
+        ref_span = ref_onsets[-1] - ref_onsets[0]
+        mob_span = mob_onsets[-1] - mob_onsets[0]
+        if ref_span <= 0 or mob_span <= 0:
+            return 1.0
+        return self._bounded_drift(ref_span / mob_span, "two sync onsets")
+
+    def _bounded_drift(self, drift, source):
+        if 0.95 <= drift <= 1.05:
+            return drift
+        print(f"[Aligner] WARNING: Ignoring implausible drift factor {drift:.6f} from {source}.")
         return 1.0

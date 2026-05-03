@@ -1,17 +1,17 @@
 [Network]
-iphone_ip = "192.168.1.100"
+iphone_ip = "192.168.0.100"
 iphone_port = 5000
 unreal_ip = "127.0.0.1"
 unreal_port = 8000
 
 [Camera]
-width = 1280
-height = 720
+width = 1920
+height = 1080
 fps = 30
 
 [OpenPose]
-binary_path = "bin/OpenPoseDemo.exe"
-model_folder = "models/"
+binary_path = "openpose/bin/OpenPoseDemo.exe"
+model_folder = "openpose/models/"
 net_resolution = "-1x320"
 
 [Calibration]
@@ -20,3 +20,6 @@ columns = 5
 square_length = 0.04
 marker_length = 0.02
 save_path = "calibration.npz"
+
+[Unreal]
+watch_path = "C:\\Users\\Administrator\\Documents\\Unreal Projects\\Aurelion\\MocapImports"

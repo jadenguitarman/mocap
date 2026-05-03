@@ -74,7 +74,11 @@ class AudioRecorder:
             audio_data = audio_data.flatten()
             
         # Normalize
-        audio_data = audio_data / np.max(np.abs(audio_data))
+        peak = np.max(np.abs(audio_data))
+        if peak == 0:
+            print("[Audio] Recording is silent; no clap can be detected.")
+            return None
+        audio_data = audio_data / peak
         
         # Find peaks
         # Threshold: 0.5 (adjustable)
@@ -102,7 +106,11 @@ class AudioRecorder:
             if len(data.shape) > 1:
                 data = np.mean(data, axis=1)
                 
-            data = data / np.max(np.abs(data))
+            peak = np.max(np.abs(data))
+            if peak == 0:
+                print("[Audio] Recording is silent; no sync spike can be detected.")
+                return None
+            data = data / peak
             peaks, _ = find_peaks(data, height=0.5, distance=samplerate*0.5)
             
             if len(peaks) > 0:

@@ -15,237 +15,213 @@ from processing.aligner import AudioAligner
 from utils.config import config
 
 
-
 class MocapPipeline:
     def __init__(self, openpose_path=None, output_dir="MocapExports"):
         op_config = config.get("OpenPose", {})
         self.openpose_path = openpose_path or op_config.get("binary_path", "bin/OpenPoseDemo.exe")
         self.net_resolution = op_config.get("net_resolution", "-1x320")
         
-        self.output_dir = output_dir
+        self.output_dir = os.path.abspath(output_dir)
 
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
+
+        # 1. Dependency Check: FFmpeg
+        self.has_ffmpeg = self._check_ffmpeg()
+        if not self.has_ffmpeg:
+            print("\n" + "!"*60)
+            print("WARNING: FFmpeg not found on your system!")
+            print("Mobile uploads (WebM) cannot be processed without FFmpeg.")
+            print("PLEASE RESTART YOUR TERMINAL (or VS Code) to refresh your PATH.")
+            print("If you just installed it, a restart is required for Python to see it.")
+            print("!"*60 + "\n")
+
+    def _check_ffmpeg(self):
+        try:
+            # Check standard path
+            subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except OSError:
+            return False
 
     def process_session(self, scene, take, cam_indices, fps=30):
         print(f"[Pipeline] Starting processing for {scene}_{take}")
         
         # 1. Audio Sync
-        audio_file = f"{scene}_{take}_audio.wav"
+        audio_file = os.path.abspath(f"{scene}_{take}_audio.wav")
         sync_time = AudioRecorder.find_sync_spike(audio_file)
         if sync_time is None:
-            print("[Pipeline] Error: No sync spike found. Defaulting to 0.")
-            sync_time = 0
+            print("[Pipeline] Error: No sync spike found. Keep the raw files and record a loud clap or sync blip.")
+            return False
             
         start_frame = int(sync_time * fps)
         print(f"[Pipeline] Sync Frame: {start_frame}")
 
         # 1.5 Align Mobile Uploads
-        # Logic: Check uploads folder for matching scene/take audio
         aligner = AudioAligner()
         upload_pattern = os.path.join("uploads", f"{scene}_{take}_*.webm")
-        mobile_files = glob.glob(upload_pattern)
+        mobile_files = [os.path.abspath(f) for f in glob.glob(upload_pattern)]
         
         mobile_offsets = {}
         if mobile_files:
             print(f"[Pipeline] Found {len(mobile_files)} mobile uploads. Aligning...")
-            # We need the master audio path for the aligner
-            # Note: Aligner uses librosa, which is fine.
-            # Calculate offsets relative to Master Audio
-            # Offset = Mobile_Start - Master_Start?
-            # No, we want the DELAY.
-            # If Master Clap is at 2.0s. Mobile Clap is at 5.0s.
-            # Mobile is AHEAD by 3.0s (recorded 3s of junk before clap, vs 2s of junk).
-            # To sync, we assume Clap is Frame 0.
-            # So Mobile Frame 0 is at 5.0s. Master Frame 0 is at 2.0s.
-            # We want everything relative to Master.
-            
             mobile_offsets = aligner.calculate_offsets(audio_file, mobile_files)
         else:
-
             print("[Pipeline] No mobile uploads found.")
             
         # --- PREPARE INPUTS ---
-        # Combine local cameras and mobile uploads into a unified list of "views"
-        # View Structure: { 'type': 'local'/'mobile', 'id': cam_idx/filename, 'video_path': path, 'offset': time_offset }
-        
         views = []
         for cam_idx in cam_indices:
+            v_path = os.path.abspath(f"{scene}_{take}_cam{cam_idx}.mp4")
             views.append({
                 'type': 'local',
                 'id': cam_idx,
-                'video_path': f"{scene}_{take}_cam{cam_idx}.mp4",
+                'video_path': v_path,
                 'offset': 0.0
             })
             
         for mob_file in mobile_files:
             fname = os.path.basename(mob_file)
-            offset_info = mobile_offsets.get(fname, {'time_offset': 0.0})
+            if fname not in mobile_offsets:
+                print(f"[Pipeline] Error: Mobile file {fname} does not have two-point audio alignment.")
+                return False
+            offset_info = mobile_offsets[fname]
+            device_id = self.extract_mobile_device_id(fname, scene, take)
             views.append({
                 'type': 'mobile',
                 'id': fname,
+                'calib_id': f"mobile_{device_id}",
                 'video_path': mob_file,
-                'offset': offset_info['time_offset']
+                'offset': offset_info['time_offset'],
+                'drift_factor': offset_info.get('drift_factor', 1.0),
             })
             
         print(f"[Pipeline] Processing {len(views)} views (Local + Mobile)...")
+        if len(views) < 2:
+            print("[Pipeline] Error: At least two camera views are required for 3D triangulation.")
+            return False
 
         # 2. Run OpenPose for each view
-        # Result: JSONs in temp folders
-        
         json_dirs = {}
         for view in views:
             video_file = view['video_path']
-            # Create a unique temp dir
-            # sanitize filename for dir
             safe_id = str(view['id']).replace('.','_')
-            output_json_dir = f"temp_{scene}_{take}_{safe_id}"
+            output_json_dir = os.path.abspath(f"temp_{scene}_{take}_{safe_id}")
             
             if not os.path.exists(video_file):
                 print(f"[Pipeline] Error: Video file {video_file} missing.")
-                continue
+                return False
                 
-            self.run_openpose(video_file, output_json_dir)
+            if not self.run_openpose(video_file, output_json_dir):
+                print(f"[Pipeline] Error: OpenPose failed for {video_file}. Keeping raw files for retry.")
+                return False
             json_dirs[view['id']] = output_json_dir
             
         # 3. Load Calibration & Compute Projections
-        # We need calibration data for TRIANGULATION.
-        # If a view (e.g. mobile) is not in calibration.npz, we cannot triangulate it suitable for 3D.
-        # But we can still export its 2D data if we wanted.
-        # For now, we only triangulate views that have calibration data.
-        
         calib_data = self.load_calibration()
         projections = []
-        active_json_dirs = [] # parallel list to projections
+        active_views = []
         
-        if calib_data:
+        if calib_data is not None:
             print("[Pipeline] Computing Projection Matrices...")
         else:
-            print("[Pipeline] WARNING: No calibration data found! Triangulation will be skipped/invalid.")
+            print("[Pipeline] Error: No valid calibration data found.")
+            return False
 
         for view in views:
-            # Check if we have calibration for this view
-            if view['type'] == 'local' and calib_data:
-                idx = str(view['id'])
-                calib_id = idx
-            elif view['type'] == 'mobile' and calib_data:
-                # Mobile filename format: {scene}_{take}_{device_id}_{timestamp}.webm
-                # We need to extract device_id.
-                # But wait, view['id'] IS the filename "scene_take_device_time.webm"
-                parts = view['id'].split('_')
-                # scene_take_device_time.webm
-                # We can't be 100% sure of the split if scene/take have underscores.
-                # But we know the format from server/app.py: f"{scene}_{take}_{device_id}_{timestamp}.webm"
-                # Let's rely on the fact that device_id is likely the 3rd to last part if we split by '_'???
-                # Or better, regex.
-                # Actually, the file naming is a bit loose.
-                # Let's assume standard format.
-                if len(parts) >= 4:
-                    # device_id is parts[-2] if timestamp is last?
-                    # filename: scene_take_sid_timestamp.webm
-                    # sid is parts[-2]
-                    sid = parts[-2]
-                    calib_id = f"mobile_{sid}"
-                else:
-                    calib_id = "unknown"
-            else:
-                 calib_id = None
+            calib_id = None
+            if view['type'] == 'local' and calib_data is not None:
+                # Local IDs must match filename prefix in calibration (e.g. mtx_cam0)
+                calib_id = f"cam{view['id']}"
+            elif view['type'] == 'mobile' and calib_data is not None:
+                calib_id = view.get("calib_id", "unknown")
 
             if calib_id and f"mtx_{calib_id}" in calib_data:
                 K = calib_data[f"mtx_{calib_id}"]
                 rvec = calib_data[f"rvec_{calib_id}"]
                 tvec = calib_data[f"tvec_{calib_id}"]
                 
-                # Compute P = K [R | t]
                 R, _ = cv2.Rodrigues(rvec)
                 Rt = np.hstack((R, tvec))
                 P = K @ Rt
                 
                 projections.append(P)
-                active_json_dirs.append(json_dirs[view['id']]) 
+                active_views.append({
+                    "id": view["id"],
+                    "json_dir": json_dirs[view["id"]],
+                    "frame_offset": int(round(view.get("offset", 0.0) * fps)),
+                    "drift_factor": view.get("drift_factor", 1.0),
+                })
                 print(f"[Pipeline] Added 3D View: {calib_id}")
             else:
                 print(f"[Pipeline] Skipping View {view['id']} for 3D (No calibration data for {calib_id})")
 
-
         # 4. Read JSONs, Triangulate, Filter
         print(f"[Pipeline] Triangulating with {len(projections)} views...")
-        
-        # Initialize Filter
         mocap_filter = MocapFilter()
-        
-        final_data = [] # List of rows [Time, Bone0_X...]
+        final_data = []
 
         if len(projections) < 2:
             print("[Pipeline] Not enough calibrated views for triangulation (Need 2+).")
-            # We will still proceed but final_data will be empty or handle gracefully
+            print("[Pipeline] NOTE: You MUST run the CALIBRATE step for each camera before processing.")
+            return False
         
-        # Determine max frames from the first active view
-        if active_json_dirs:
-            first_dir = active_json_dirs[0]
-            # Files match pattern *_keypoints.json
-            json_files = sorted(glob.glob(os.path.join(first_dir, "*_keypoints.json")))
-            num_frames = len(json_files)
-            
-            # Frame Count Strategy: USE MINIMUM
-            # Reasoning: Triangulation requires valid data from ALL calibrated cameras simultaneously.
-            # If one camera stops early, we cannot resolve the 3D position reliably (or at all for 2-cam setups)
-            # without complex missing-marker handling.
-            # Therefore, the valid interaction period is the intersection of all camera timelines.
-            num_frames = min([len(glob.glob(os.path.join(d, "*_keypoints.json"))) for d in active_json_dirs])
-            print(f"[Pipeline] Processing {num_frames} frames (limited by shortest video).")
+        if active_views:
+            view_counts = [
+                len(glob.glob(os.path.join(v["json_dir"], "*_keypoints.json")))
+                for v in active_views
+            ]
+            if not view_counts:
+                print("[Pipeline] Error: No valid JSON frames found in any calibrated view.")
+                return False
+            else:
+                available_after_sync = [
+                    int((count - max(0, start_frame - v["frame_offset"])) * v["drift_factor"])
+                    for count, v in zip(view_counts, active_views)
+                ]
+                num_output_frames = min(available_after_sync)
+                if num_output_frames <= 0:
+                    print("[Pipeline] Error: No frames remain after sync alignment.")
+                    return False
+                print(f"[Pipeline] Processing {num_output_frames} synced frames.")
 
-            
-            for f in range(start_frame, num_frames):
-                frame_points = [] # List of point lists for this frame
-                
-                valid_frame = True
-                for j_dir in active_json_dirs:
-                    # Construct filename. 
-                    # OpenPose output format: {video_name_no_ext}_{frame_12d}_keypoints.json
-                    # We need to find the file that *ends with* _{f:012d}_keypoints.json in this dir
-                    # Easier to glob it or assume strict naming if we knew the video name exactly.
-                    # Construction matching run_openpose:
-                    # video_path -> basename -> splitext
-                    # But we are iterating dirs directly...
-                    
-                    # Let's try to find the specific frame file
-                    frame_suffix = f"_{f:012d}_keypoints.json"
-                    candidates = glob.glob(os.path.join(j_dir, f"*{frame_suffix}"))
+            for out_frame in range(num_output_frames):
+                frame_points = []
+                for view in active_views:
+                    source_start = start_frame - view["frame_offset"]
+                    source_frame = source_start + int(round(out_frame / view["drift_factor"]))
+                    if source_frame < 0:
+                        frame_points.append([])
+                        continue
+                    frame_suffix = f"_{source_frame:012d}_keypoints.json"
+                    candidates = glob.glob(os.path.join(view["json_dir"], f"*{frame_suffix}"))
                     
                     if candidates:
                         json_path = candidates[0]
                         kps = self.read_openpose_json(json_path)
                         frame_points.append(kps)
                     else:
-                        # Missing frame
                         frame_points.append([]) 
-                        # Or mark frame invalid?
                 
-                # Triangulate this frame
                 if len(frame_points) == len(projections):
                     points_3d = triangulate_frame(projections, frame_points)
-                    
-                    # Filter
-                    timestamp = (f - start_frame) / fps
+                    timestamp = out_frame / fps
                     filtered_3d = mocap_filter.filter_frame(timestamp, points_3d)
                     
-                    # Flatten into row
-                    # points_3d is list of [x,y,z]
-                    # We need [x1,y1,z1, x2,y2,z2...]
                     row = [timestamp]
                     for pt in filtered_3d:
                         if pt is not None:
-                            row.extend(pt) # x, y, z
+                            row.extend(pt)
                         else:
-                            row.extend([0,0,0]) # Missing point
-                            
+                            row.extend([0,0,0])
                     final_data.append(row)
+        else:
+            print("[Pipeline] Error: No active calibrated views available.")
+            return False
 
-
-
-            pass
-
+        if not final_data:
+            print("[Pipeline] Error: Triangulation produced no animation rows. Keeping raw files.")
+            return False
 
         # 4. Export CSV
         csv_filename = os.path.join(self.output_dir, f"{scene}_{take}.csv")
@@ -256,27 +232,28 @@ class MocapPipeline:
             return False
         
         # 5. Cleanup
-        # Verify CSV exists and is not empty
-        if os.path.exists(csv_filename) and os.path.getsize(csv_filename) > 0:
-            print("[Pipeline] CSV verified. performing cleanup...")
+        if self.verify_csv(csv_filename):
             print("[Pipeline] CSV verified. performing cleanup...")
             for view in views:
-                # Cleanup temp dirs
                 if view['id'] in json_dirs:
                     shutil.rmtree(json_dirs[view['id']], ignore_errors=True)
                 
-                # Cleanup videos (Safe usage: Uncomment to delete)
-                # if os.path.exists(view['video_path']):
-                #    os.remove(view['video_path'])
-
-                if os.path.exists(video_file):
-                    os.remove(video_file)
-                    print(f"[Pipeline] Deleted raw video: {video_file}")
+                if os.path.exists(view['video_path']):
+                    os.remove(view['video_path'])
+                    print(f"[Pipeline] Deleted raw video: {view['video_path']}")
         else:
             print("[Pipeline] WARNING: CSV verification failed. Keeping raw files.")
 
         return True
 
+    @staticmethod
+    def extract_mobile_device_id(filename, scene, take):
+        upload_prefix = f"{scene}_{take}_"
+        upload_stem = os.path.splitext(os.path.basename(filename))[0]
+        if upload_stem.startswith(upload_prefix):
+            rest = upload_stem[len(upload_prefix):]
+            return rest.rsplit("_", 1)[0]
+        return upload_stem.rsplit("_", 1)[0]
 
     def run_openpose(self, video_path, output_dir):
         if not os.path.exists(output_dir):
@@ -284,64 +261,102 @@ class MocapPipeline:
             
         print(f"[Pipeline] Running OpenPose on {video_path}...")
         
-        # Command: OpenPoseDemo.exe --video video.mp4 --write_json output_dir --display 0 --render_pose 0 --net_resolution -1x320
+        # OpenPose MUST be run from its root directory to find models.
+        # We also need to use absolute paths since we're changing CWD.
+        op_binary = os.path.abspath(self.openpose_path)
+        op_root = os.path.dirname(os.path.dirname(op_binary))
+        
+        # Convert project-relative paths to absolute
+        abs_video = os.path.abspath(video_path)
+        abs_output = os.path.abspath(output_dir)
+
+        # Get the relative path of binary from root (usually bin/OpenPoseDemo.exe)
+        # We use the literal name since on Windows we want to trigger the .exe
+        bin_filename = os.path.basename(op_binary)
+        bin_rel = os.path.join("bin", bin_filename)
+
         cmd = [
-            self.openpose_path,
-            "--video", video_path,
-            "--write_json", output_dir,
+            bin_rel,
+            "--video", abs_video,
+            "--write_json", abs_output,
             "--display", "0",
             "--render_pose", "0",
             "--net_resolution", self.net_resolution
         ]
-
         
-        # Mocking execution if binary missing
+        if not os.path.exists(op_binary):
+            print(f"[Pipeline] OpenPose binary not found: {op_binary}")
+            return False
+
         try:
-            subprocess.check_call(cmd)
-        except FileNotFoundError:
-            print("[Pipeline] OpenPose binary not found. Mocking JSON output...")
-            # Create dummy JSONs for testing
-            # self.create_dummy_jsons(output_dir, 100)
+            # Run from OpenPose root
+            subprocess.check_call(cmd, cwd=op_root)
+            json_count = len(glob.glob(os.path.join(output_dir, "*_keypoints.json")))
+            if json_count == 0:
+                print("[Pipeline] OpenPose completed but produced no keypoint JSON files.")
+                return False
+            return True
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            print(f"[Pipeline] OpenPose failed (Root: {op_root}). Error: {e}")
+            return False
 
     def read_openpose_json(self, json_path):
         if not os.path.exists(json_path):
-            return [] # Can happen if OpenPose failed for a frame
+            return []
             
         with open(json_path, 'r') as f:
             data = json.load(f)
             
-        # Extract BODY_25
         if not data['people']:
             return []
             
-        # Get first person
         person = data['people'][0]
-        # pose_keypoints_2d list
         kp = person['pose_keypoints_2d']
-        
-        # Convert to list of (x, y, c)
         points = []
         for i in range(0, len(kp), 3):
             points.append( kp[i:i+3] )
-            
         return points
 
     def write_csv(self, data, filename):
         with open(filename, 'w', newline='') as f:
             writer = csv.writer(f)
-            # Header?
             header = ["Time"] + [f"Bone_{i}_{axis}" for i in range(25) for axis in ["X","Y","Z"]]
             writer.writerow(header)
             writer.writerows(data)
         print(f"[Pipeline] Exported {filename}")
-        print(f"[Pipeline] Exported {filename}")
+
+    def verify_csv(self, filename):
+        if not os.path.exists(filename) or os.path.getsize(filename) <= 0:
+            return False
+        try:
+            with open(filename, newline='') as f:
+                reader = csv.reader(f)
+                header = next(reader, None)
+                first_row = next(reader, None)
+            expected_cols = 1 + 25 * 3
+            return bool(header and first_row and len(header) == expected_cols and len(first_row) == expected_cols)
+        except Exception as e:
+            print(f"[Pipeline] CSV verification error: {e}")
+            return False
 
     def load_calibration(self):
         calib_path = config.get("Calibration", {}).get("save_path", "calibration.npz")
         if not os.path.exists(calib_path):
             return None
         try:
-            return np.load(calib_path)
+            data = np.load(calib_path)
+            complete = []
+            for key in data.files:
+                if not key.startswith("mtx_"):
+                    continue
+                cam_id = key.replace("mtx_", "")
+                required = [f"dist_{cam_id}", f"rvec_{cam_id}", f"tvec_{cam_id}"]
+                if all(req in data.files for req in required):
+                    complete.append(cam_id)
+            if len(complete) < 2:
+                print(f"[Pipeline] Calibration file is incomplete. Complete cameras: {complete or 'none'}")
+                return None
+            return data
         except Exception as e:
             print(f"[Pipeline] Error loading calibration: {e}")
             return None

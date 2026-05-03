@@ -56,6 +56,8 @@ class OneEuroFilter(object):
             dt = 1.0/30.0 # Default
         else:
             dt = t - self.t_prev
+            if dt <= 0:
+                dt = 1.0/30.0
             
         self.t_prev = t
 
@@ -89,12 +91,18 @@ class MocapFilter:
         # Flatten input if needed or iterate
         # Assumes points_3d is list of [x, y, z]
         
-        flat_points = [c for p in points_3d for c in p]
-        
+        flat_points = []
+        for p in points_3d:
+            if p is None:
+                flat_points.extend([0.0, 0.0, 0.0])
+            else:
+                flat_points.extend(p)
+
         if len(flat_points) != len(self.filters):
-            # Re-init if size changes (e.g. variable number of people?)
-            # For standard body tracking, point count is fixed (BODY_25)
-            pass 
+            self.filters = [
+                OneEuroFilter(t, flat_points[i], self.filters[0].min_cutoff, self.filters[0].beta)
+                for i in range(len(flat_points))
+            ]
             
         filtered_flat = []
         for i, val in enumerate(flat_points):

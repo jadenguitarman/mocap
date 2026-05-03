@@ -64,14 +64,24 @@ def triangulate_frame(projection_matrices, keypoints_per_camera):
     Returns:
         List of 3D points.
     """
-    num_keypoints = len(keypoints_per_camera[0])
+    if not projection_matrices or not keypoints_per_camera:
+        return []
+
+    num_keypoints = max((len(kps) for kps in keypoints_per_camera if kps), default=0)
     points_3d = []
     
     for i in range(num_keypoints):
         points_2d = []
         for cam_idx in range(len(projection_matrices)):
             # Assuming keypoints_per_camera is a list of lists of (u,v)
+            if cam_idx >= len(keypoints_per_camera) or i >= len(keypoints_per_camera[cam_idx]):
+                points_2d.append(None)
+                continue
+
             kp = keypoints_per_camera[cam_idx][i]
+            if not kp or len(kp) < 2:
+                points_2d.append(None)
+                continue
             # Check confidence if available? OpenPose usually gives (x, y, confidence)
             if len(kp) >= 3 and kp[2] < 0.1: # Low confidence
                 points_2d.append(None)
