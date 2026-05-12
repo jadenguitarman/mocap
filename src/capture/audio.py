@@ -7,6 +7,10 @@ import time
 import os
 from scipy.signal import find_peaks
 
+# Minimum time between sync claps (seconds)
+MIN_CLAP_DISTANCE_SEC = 2.0
+
+
 class AudioRecorder:
     def __init__(self, filename="recording.wav", device=None, samplerate=44100, channels=1):
         self.filename = filename
@@ -67,58 +71,74 @@ class AudioRecorder:
         return None
 
     def analyze_clap(self, audio_data):
-        # Flatten to mono if needed
-        if self.channels > 1:
-            audio_data = np.mean(audio_data, axis=1)
-        else:
-            audio_data = audio_data.flatten()
-            
-        # Normalize
-        peak = np.max(np.abs(audio_data))
-        if peak == 0:
-            print("[Audio] Recording is silent; no clap can be detected.")
-            return None
-        audio_data = audio_data / peak
-        
-        # Find peaks
-        # Threshold: 0.5 (adjustable)
-        peaks, _ = find_peaks(audio_data, height=0.5, distance=self.samplerate*0.5) # Min 0.5s between claps
-        
-        if len(peaks) > 0:
-            first_clap_index = peaks[0]
-            first_clap_time = first_clap_index / self.samplerate
-            print(f"[Audio] CLAP DETECTED at {first_clap_time:.4f}s")
-            return first_clap_time
+        """Analyze audio and return the first clap time (for backward compatibility)."""
+        clap_times = self.find_all_sync_spikes(self.filename)
+        if clap_times and len(clap_times) > 0:
+            print(f"[Audio] CLAP DETECTED at {clap_times[0]:.4f}s")
+            return clap_times[0]
         else:
             print("[Audio] No clear clap detected.")
             return None
 
     @staticmethod
-    def find_sync_spike(filename):
+    def find_all_sync_spikes(filename):
+        """
+        Find ALL sync spikes (claps) in an audio file.
+        Returns a list of times (in seconds) where significant peaks occur.
+        This enables two-point synchronization for drift calculation.
+        """
         if not os.path.exists(filename):
             print(f"[Audio] File not found: {filename}")
-            return None
+            return []
             
         try:
             samplerate, data = wavfile.read(filename)
-            # Use the same logic
-            # Flatten
+            # Flatten to mono if needed
             if len(data.shape) > 1:
                 data = np.mean(data, axis=1)
                 
             peak = np.max(np.abs(data))
             if peak == 0:
                 print("[Audio] Recording is silent; no sync spike can be detected.")
-                return None
+                return []
             data = data / peak
-            peaks, _ = find_peaks(data, height=0.5, distance=samplerate*0.5)
             
-            if len(peaks) > 0:
-                return peaks[0] / samplerate
-            return None
+            # Find peaks with minimum distance between claps
+            min_distance_samples = int(MIN_CLAP_DISTANCE_SEC * samplerate)
+            peaks, properties = find_peaks(data, height=0.3, distance=min_distance_samples)
+            
+            if len(peaks) == 0:
+                return []
+            
+            # Sort by prominence (sharpness) and return times
+            # Use the highest peaks first (most likely to be intentional claps)
+            peak_heights = properties['heights']
+            sorted_indices = np.argsort(peak_heights)[::-1]  # Descending order
+            
+            # Convert to times and sort by time
+            clap_times = sorted([peaks[i] / samplerate for i in sorted_indices])
+            
+            if len(clap_times) >= 2:
+                print(f"[Audio] Found {len(clap_times)} sync spikes: start={clap_times[0]:.4f}s, end={clap_times[-1]:.4f}s")
+            elif len(clap_times) == 1:
+                print(f"[Audio] Found 1 sync spike at {clap_times[0]:.4f}s (single-point sync only)")
+            
+            return clap_times
         except Exception as e:
-            print(f"[Audio] Error finding sync spike: {e}")
+            print(f"[Audio] Error finding sync spikes: {e}")
+            return []
+
+    @staticmethod
+    def find_sync_spike(filename):
+        """Find the first sync spike (for backward compatibility)."""
+        if not os.path.exists(filename):
+            print(f"[Audio] File not found: {filename}")
             return None
+            
+        clap_times = AudioRecorder.find_all_sync_spikes(filename)
+        if clap_times and len(clap_times) > 0:
+            return clap_times[0]
+        return None
 
 
 if __name__ == "__main__":
